@@ -16,7 +16,6 @@
     "answers": "vitest run tests/answers"
   },
   "dependencies": {
-    "@google/genai": "^1.52.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },

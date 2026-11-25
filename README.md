@@ -51,7 +51,7 @@ src/
     cart/            held items, server-clock countdown, edit / remove
     checkout/        coupon, payment label, Pay, orders.json export
     orderBuilder/    the one hook holding menu + stock + cart + orders
-    assistant/       Gemini tool table (Part F, not wired yet)
+    assistant/       Gemini function calling, tool table, chat panel
 tests/
   fixtures/        configurations A, B, C from Section 9
   acceptance/      TC-01 .. TC-20, named after the brief
@@ -100,10 +100,10 @@ The reasoning behind every ◆ decision point and ✋ checkpoint is in
 | C — async `/price` preview | Wired: 300 ms debounce, stale-response guard, Retry on failure. TC-12's automated test outstanding |
 | D — cart and reservations | Done, TC-13 … TC-15 green (atomic reserve, idempotency, net-difference swap, server-clock expiry) |
 | E — checkout and orders JSON | Done, TC-16 … TC-17 green (atomic checkout, idempotent Pay, persisted store, `Download orders.json`) |
-| F — sales assistant | Stats functions and tool table done; Gemini round trip outstanding |
+| F — sales assistant | Done, TC-18 … TC-20 green (Gemini function calling, 7 tools, chat panel) |
 | G — bonus | Not started, and will not be before A–F pass |
 
-`npm test` currently runs 135 passing tests. The outstanding acceptance tests
+`npm test` currently runs 171 passing tests. The outstanding acceptance tests
 exist as `it.todo` in `tests/acceptance/pending.test.ts`, so the suite is a
 live checklist of Section 9 rather than a list that only lives in the brief.
 

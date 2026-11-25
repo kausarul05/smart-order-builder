@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { formatInZone } from './domain/time';
 import type { PaymentMethod, StoredOrder } from './domain/types';
+import { AssistantPanel } from './features/assistant/AssistantPanel';
 import { CartPanel } from './features/cart/CartPanel';
 import { Configurator } from './features/configurator/Configurator';
 import { CheckoutPanel } from './features/checkout/CheckoutPanel';
@@ -110,6 +111,8 @@ export default function App() {
             available={builder.available}
             names={menu.ingredients}
           />
+
+          <AssistantPanel menu={menu} orders={builder.orders} />
         </div>
       </div>
     </main>

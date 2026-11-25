@@ -5,7 +5,6 @@
  *
  * As each feature lands, move its block into the matching file:
  *   TC-12            -> tests/acceptance/price-preview.test.ts
- *   TC-18 .. TC-20   -> tests/acceptance/assistant.test.ts
  */
 
 import { describe, it } from 'vitest';
@@ -20,12 +19,7 @@ describe('TC-12 - async price preview (Part C)', () => {
 
 // TC-16 and TC-17 now live in tests/acceptance/orders.test.ts.
 
-describe('TC-18 .. TC-20 - the sales assistant (Part F)', () => {
-  it.todo('TC-18: the order count rises by exactly one after a checkout');
-  it.todo('TC-19: the best-selling option matches the stats function');
-  it.todo('TC-20: it refuses to invent a best customer');
-  it.todo('reports a missing key, an invalid key, a 429 and a network error');
-});
+// TC-18, TC-19 and TC-20 now live in tests/acceptance/assistant.test.ts.
 
 describe('Part G - bonus, only after A to F are correct', () => {
   it.todo('a refresh keeps only still-valid reservations');
