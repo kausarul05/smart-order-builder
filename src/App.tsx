@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { api } from './api/client';
+import { downloadOrders } from './features/checkout/downloadOrders';
 import { formatBdt } from './domain/money';
 import { formatInZone } from './domain/time';
 import { SERVER_TIME_ZONE } from './server/clock';
@@ -22,16 +23,22 @@ interface Loaded {
 export default function App() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [orderCount, setOrderCount] = useState<number | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [{ menu }, { available }] = await Promise.all([
+        const [{ menu }, { available }, { orders }] = await Promise.all([
           api.getMenu(),
           api.getStock(),
+          api.getOrders(),
         ]);
-        if (!cancelled) setLoaded({ menu, available });
+        if (!cancelled) {
+          setLoaded({ menu, available });
+          setOrderCount(orders.length);
+        }
       } catch (cause) {
         if (!cancelled) {
           setError(cause instanceof Error ? cause.message : 'Failed to load the menu');
@@ -107,6 +114,37 @@ export default function App() {
 
       <section className="mt-10">
         <h2 className="text-sm font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+          Orders
+        </h2>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <p className="text-sm tnum" style={{ color: 'var(--text-muted)' }}>
+            {orderCount === null
+              ? 'Loading the order store…'
+              : `${orderCount} order${orderCount === 1 ? '' : 's'} in the store (seed orders priced by our own engine)`}
+          </p>
+          <button
+            type="button"
+            disabled={exporting || orderCount === null}
+            onClick={() => {
+              setExporting(true);
+              void downloadOrders()
+                .catch((cause: unknown) =>
+                  setError(
+                    cause instanceof Error ? cause.message : 'Export failed',
+                  ),
+                )
+                .finally(() => setExporting(false));
+            }}
+            className="rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+            style={{ background: 'var(--accent)', color: 'var(--surface)' }}
+          >
+            {exporting ? 'Preparing…' : 'Download orders.json'}
+          </button>
+        </div>
+      </section>
+
+      <section className="mt-10">
+        <h2 className="text-sm font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
           Build status
         </h2>
         <ul className="mt-3 space-y-1 text-sm">
@@ -131,8 +169,8 @@ const BUILD_STATUS: readonly { part: string; label: string; done: boolean }[] = 
   { part: 'B', label: 'Shared stock and net-difference edits, TC-08 to TC-11', done: true },
   { part: 'C', label: 'Pricing engine, TC-05 to TC-07', done: true },
   { part: 'C', label: 'Async price preview, TC-12', done: false },
-  { part: 'D', label: 'Cart and reservations, TC-13 to TC-15', done: false },
-  { part: 'E', label: 'Checkout and orders JSON, TC-16 to TC-17', done: false },
+  { part: 'D', label: 'Cart and reservations, TC-13 to TC-15', done: true },
+  { part: 'E', label: 'Checkout and orders JSON, TC-16 to TC-17', done: true },
   { part: 'F', label: 'Sales assistant, TC-18 to TC-20', done: false },
   { part: 'G', label: 'Bonus — only after A to F', done: false },
 ];

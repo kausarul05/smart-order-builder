@@ -27,6 +27,7 @@ import type {
   Poisha,
   PriceBreakdown,
   PriceCartInput,
+  PriceCartLine,
   Selection,
   UnitPrice,
 } from '../types';
@@ -68,7 +69,18 @@ export function priceUnit(selection: Selection, menu: Menu): UnitPrice {
     step2,
     comboOff,
     unitPrice: step2 - comboOff,
+    locked: false,
   };
+}
+
+/**
+ * Steps 1-3, but honouring a price locked at Add to Cart (D2). The computed
+ * steps are kept for the UI; only `unitPrice` is overridden.
+ */
+function priceUnitForLine(line: PriceCartLine, menu: Menu): UnitPrice {
+  const computed = priceUnit(line.selection, menu);
+  if (line.lockedUnitPrice === undefined) return computed;
+  return { ...computed, unitPrice: line.lockedUnitPrice, locked: true };
 }
 
 function findGroup(menu: Menu, groupId: string): MenuGroup | undefined {
@@ -116,7 +128,7 @@ export function priceCart(input: PriceCartInput): PriceBreakdown {
 
   // Step 4 - lines and cart subtotal.
   const lines: LinePrice[] = cart.map((item) => {
-    const unit = priceUnit(item.selection, menu);
+    const unit = priceUnitForLine(item, menu);
     return { unit, qty: item.qty, lineTotal: unit.unitPrice * item.qty };
   });
   const subtotal = lines.reduce((total, line) => total + line.lineTotal, 0);

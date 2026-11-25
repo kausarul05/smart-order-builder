@@ -5,7 +5,6 @@
  *
  * As each feature lands, move its block into the matching file:
  *   TC-12            -> tests/acceptance/price-preview.test.ts
- *   TC-16 .. TC-17   -> tests/acceptance/orders.test.ts
  *   TC-18 .. TC-20   -> tests/acceptance/assistant.test.ts
  */
 
@@ -19,17 +18,7 @@ describe('TC-12 - async price preview (Part C)', () => {
 
 // TC-13, TC-14 and TC-15 now live in tests/acceptance/cart.test.ts.
 
-describe('TC-16 - checkout is atomic and idempotent (Part E)', () => {
-  it.todo('two fast Pay clicks create exactly one order');
-  it.todo('empties the cart and turns reserved stock into sold stock');
-  it.todo('does not release sold stock when the old reservation expires');
-});
-
-describe('TC-17 - orders survive a refresh and export (Part E)', () => {
-  it.todo('reloads stored orders after a refresh');
-  it.todo('prices the six seed orders at their own createdAt');
-  it.todo('exports seed and new orders as one valid JSON file');
-});
+// TC-16 and TC-17 now live in tests/acceptance/orders.test.ts.
 
 describe('TC-18 .. TC-20 - the sales assistant (Part F)', () => {
   it.todo('TC-18: the order count rises by exactly one after a checkout');

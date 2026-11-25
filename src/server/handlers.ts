@@ -21,10 +21,17 @@ import { http, HttpResponse, delay } from 'msw';
 
 import { priceCart } from '@/domain/pricing/priceCart';
 import { availableMap } from '@/domain/stock/ingredients';
-import type { PriceBreakdown, Selection } from '@/domain/types';
+import type { PaymentMethod, PriceBreakdown, Selection } from '@/domain/types';
 import { cartView, editItem, removeItem, reserveItem, type CartResult } from './cart';
 import { serverNow } from './clock';
-import { getState, snapshot, sweepExpired } from './state';
+import {
+  checkout,
+  initOrders,
+  listOrders,
+  ordersFile,
+  type CheckoutResult,
+} from './orders';
+import { getState, loadOrdersFromStorage, snapshot, sweepExpired } from './state';
 
 /** Latency band and failure rate the brief prescribes for /price. */
 export const PRICE_LATENCY_MS = { min: 200, max: 1500 } as const;
@@ -136,11 +143,77 @@ export const handlers = [
     cartResponse(removeItem(String(params.id))),
   ),
 
-  /* ----------------------------------------------- Part E, not built yet */
+  /* ------------------------------------------------------------- Part E */
 
-  http.post('/api/checkout', () => notImplemented('POST /api/checkout', 'E')),
-  http.get('/api/orders', () => notImplemented('GET /api/orders', 'E')),
+  http.post('/api/checkout', async ({ request }) => {
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+    if (idempotencyKey === null) {
+      return HttpResponse.json(
+        {
+          error: 'missing_idempotency_key',
+          message: 'Idempotency-Key header is required',
+        },
+        { status: 400 },
+      );
+    }
+    await ensureOrdersLoaded();
+    const body = (await request.json()) as {
+      paymentMethod: PaymentMethod;
+      couponCode?: string | null;
+    };
+    return checkoutResponse(
+      checkout({
+        paymentMethod: body.paymentMethod,
+        couponCode: body.couponCode ?? null,
+        idempotencyKey,
+      }),
+    );
+  }),
+
+  http.get('/api/orders', async () => {
+    await ensureOrdersLoaded();
+    return HttpResponse.json(envelope({ orders: listOrders() }));
+  }),
+
+  /** The exact bytes behind the "Download orders.json" button. */
+  http.get('/api/orders/export', async () => {
+    await ensureOrdersLoaded();
+    return HttpResponse.json(envelope({ file: ordersFile() }));
+  }),
 ];
+
+/**
+ * Lazily brings the order store up: a store persisted in localStorage wins,
+ * otherwise the six seed orders are loaded and priced with our own engine
+ * at each order's own `createdAt`. Runs at most once (TC-17).
+ */
+let seeding: Promise<void> | null = null;
+
+export async function ensureOrdersLoaded(): Promise<void> {
+  if (getState().seedLoaded) return;
+  seeding ??= (async () => {
+    loadOrdersFromStorage();
+    if (getState().seedLoaded) return;
+    const response = await fetch('/orders.seed.json');
+    initOrders(await response.json());
+  })();
+  await seeding;
+}
+
+/** Tests reset the lazy loader along with the state. */
+export function resetSeedLoader(): void {
+  seeding = null;
+}
+
+function checkoutResponse(result: CheckoutResult) {
+  if (result.ok) {
+    return HttpResponse.json(envelope({ order: result.order, replayed: result.replayed }));
+  }
+  return HttpResponse.json(
+    { error: result.code, message: result.message },
+    { status: result.code === 'invalid_payment' ? 422 : 409 },
+  );
+}
 
 /**
  * Maps a cart result onto HTTP. A shortage is a 409, because the request
@@ -172,12 +245,3 @@ function cartResponse(result: CartResult) {
   );
 }
 
-function notImplemented(route: string, part: string) {
-  return HttpResponse.json(
-    {
-      error: 'not_implemented',
-      message: `${route} is Part ${part} and is not built yet`,
-    },
-    { status: 501 },
-  );
-}

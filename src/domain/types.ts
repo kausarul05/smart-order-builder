@@ -189,6 +189,12 @@ export interface UnitPrice {
   readonly comboOff: Poisha;
   /** Final per-unit price. */
   readonly unitPrice: Poisha;
+  /**
+   * True when `unitPrice` came from the price locked at Add to Cart (D2)
+   * rather than from the steps above. The steps are still reported, so the
+   * UI can show what the same configuration would cost today.
+   */
+  readonly locked: boolean;
 }
 
 export interface LinePrice {
@@ -219,8 +225,20 @@ export interface PriceBreakdown {
   readonly payable: Poisha;
 }
 
+export interface PriceCartLine {
+  readonly selection: Selection;
+  readonly qty: number;
+  /**
+   * The unit price locked when the item entered the cart (D2). When it is
+   * given, the engine uses it instead of re-pricing the configuration, so
+   * a later menu change cannot move the price of an item already in the
+   * cart. Cart-level discounts and VAT are still recomputed.
+   */
+  readonly lockedUnitPrice?: Poisha;
+}
+
 export interface PriceCartInput {
-  readonly cart: readonly { readonly selection: Selection; readonly qty: number }[];
+  readonly cart: readonly PriceCartLine[];
   readonly menu: Menu;
   /** Coupon the user typed. Kept even when rejected (D6). */
   readonly couponCode?: string | null;

@@ -94,11 +94,11 @@ The reasoning behind every ◆ decision point and ✋ checkpoint is in
 | C — pricing engine | Done, TC-05 … TC-07 green |
 | C — async `/price` preview | Endpoint done (300 ms debounce, 200–1500 ms latency, 15 % failure); wiring + TC-12 outstanding |
 | D — cart and reservations | Done, TC-13 … TC-15 green (atomic reserve, idempotency, net-difference swap, server-clock expiry) |
-| E — checkout and orders JSON | Seed pricing done; checkout + export outstanding |
+| E — checkout and orders JSON | Done, TC-16 … TC-17 green (atomic checkout, idempotent Pay, persisted store, `Download orders.json`) |
 | F — sales assistant | Stats functions and tool table done; Gemini round trip outstanding |
 | G — bonus | Not started, and will not be before A–F pass |
 
-`npm test` currently runs 110 passing tests. The outstanding acceptance tests
+`npm test` currently runs 126 passing tests. The outstanding acceptance tests
 exist as `it.todo` in `tests/acceptance/pending.test.ts`, so the suite is a
 live checklist of Section 9 rather than a list that only lives in the brief.
 

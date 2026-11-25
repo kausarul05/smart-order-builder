@@ -8,8 +8,11 @@
  */
 
 import type {
+  CartItem,
   IngredientId,
   Menu,
+  OrdersFile,
+  PaymentMethod,
   PriceBreakdown,
   Selection,
   StoredOrder,
@@ -117,13 +120,68 @@ export class ApiClient {
     });
   }
 
+  /* ---------------------------------------------------------- Part D */
+
+  getCart(): Promise<{ items: readonly CartItemView[]; cartVersion: number }> {
+    return this.request('/api/cart');
+  }
+
+  /**
+   * `idempotencyKey` belongs to the user's INTENT, not to the click: the
+   * caller creates it once and reuses it until the add succeeds, which is
+   * what makes three fast clicks one item (TC-13).
+   */
+  addToCart(
+    body: { selection: Selection; qty: number },
+    idempotencyKey: string,
+  ): Promise<{ item: CartItem; cartVersion: number }> {
+    return this.request('/api/cart', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Idempotency-Key': idempotencyKey },
+    });
+  }
+
+  editCartItem(
+    id: string,
+    body: { selection: Selection; qty: number; expectedVersion?: number },
+  ): Promise<{ item: CartItem; cartVersion: number }> {
+    return this.request(`/api/cart/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+  }
+
+  removeCartItem(id: string): Promise<{ item: CartItem; cartVersion: number }> {
+    return this.request(`/api/cart/${id}`, { method: 'DELETE' });
+  }
+
+  /* ---------------------------------------------------------- Part E */
+
+  checkout(
+    body: { paymentMethod: PaymentMethod; couponCode?: string | null },
+    idempotencyKey: string,
+  ): Promise<{ order: StoredOrder; replayed: boolean }> {
+    return this.request('/api/checkout', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Idempotency-Key': idempotencyKey },
+    });
+  }
+
   getOrders(): Promise<{ orders: readonly StoredOrder[] }> {
     return this.request('/api/orders');
   }
 
-  // TODO(Part D): addToCart / editCartItem / removeCartItem, each sending
-  // an Idempotency-Key header so TC-13 holds.
-  // TODO(Part E): checkout(paymentMethod, couponCode, idempotencyKey).
+  exportOrders(): Promise<{ file: OrdersFile }> {
+    return this.request('/api/orders/export');
+  }
+}
+
+/** Shape `GET /api/cart` returns for each item. */
+export interface CartItemView extends CartItem {
+  readonly expiresInMs: number;
+  readonly editable: boolean;
 }
 
 export const api = new ApiClient();
