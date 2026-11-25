@@ -22,6 +22,7 @@ import { http, HttpResponse, delay } from 'msw';
 import { priceCart } from '@/domain/pricing/priceCart';
 import { availableMap } from '@/domain/stock/ingredients';
 import type { PriceBreakdown, Selection } from '@/domain/types';
+import { cartView, editItem, removeItem, reserveItem, type CartResult } from './cart';
 import { serverNow } from './clock';
 import { getState, snapshot, sweepExpired } from './state';
 
@@ -90,18 +91,86 @@ export const handlers = [
     );
   }),
 
-  /* ----------------------------------------------- Part D, not built yet */
+  /* ------------------------------------------------------------- Part D */
 
-  http.get('/api/cart', () => notImplemented('GET /api/cart', 'D')),
-  http.post('/api/cart', () => notImplemented('POST /api/cart', 'D')),
-  http.patch('/api/cart/:id', () => notImplemented('PATCH /api/cart/:id', 'D')),
-  http.delete('/api/cart/:id', () => notImplemented('DELETE /api/cart/:id', 'D')),
+  http.get('/api/cart', () => {
+    const state = getState();
+    return HttpResponse.json(
+      envelope({ items: cartView(), cartVersion: state.cartVersion }),
+    );
+  }),
+
+  http.post('/api/cart', async ({ request }) => {
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+    if (idempotencyKey === null) {
+      return HttpResponse.json(
+        { error: 'missing_idempotency_key', message: 'Idempotency-Key header is required' },
+        { status: 400 },
+      );
+    }
+    const body = (await request.json()) as { selection: Selection; qty: number };
+    return cartResponse(
+      reserveItem({ selection: body.selection, qty: body.qty, idempotencyKey }),
+    );
+  }),
+
+  http.patch('/api/cart/:id', async ({ request, params }) => {
+    const body = (await request.json()) as {
+      selection: Selection;
+      qty: number;
+      expectedVersion?: number;
+    };
+    return cartResponse(
+      editItem({
+        itemId: String(params.id),
+        selection: body.selection,
+        qty: body.qty,
+        ...(body.expectedVersion === undefined
+          ? {}
+          : { expectedVersion: body.expectedVersion }),
+      }),
+    );
+  }),
+
+  http.delete('/api/cart/:id', ({ params }) =>
+    cartResponse(removeItem(String(params.id))),
+  ),
 
   /* ----------------------------------------------- Part E, not built yet */
 
   http.post('/api/checkout', () => notImplemented('POST /api/checkout', 'E')),
   http.get('/api/orders', () => notImplemented('GET /api/orders', 'E')),
 ];
+
+/**
+ * Maps a cart result onto HTTP. A shortage is a 409, because the request
+ * was well formed and the server simply cannot serve it right now - which
+ * is what lets the client keep the configuration and offer Retry (TC-14).
+ */
+function cartResponse(result: CartResult) {
+  if (result.ok) {
+    return HttpResponse.json(
+      envelope({ item: result.item, cartVersion: result.cartVersion }),
+    );
+  }
+
+  const status =
+    result.code === 'not_found'
+      ? 404
+      : result.code === 'invalid'
+        ? 422
+        : 409; // shortage, expired, conflict
+
+  return HttpResponse.json(
+    {
+      error: result.code,
+      message: result.message,
+      ...(result.code === 'shortage' ? { shortages: result.shortages } : {}),
+      ...(result.code === 'invalid' ? { violations: result.violations } : {}),
+    },
+    { status },
+  );
+}
 
 function notImplemented(route: string, part: string) {
   return HttpResponse.json(

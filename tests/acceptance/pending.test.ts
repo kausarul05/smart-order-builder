@@ -5,8 +5,7 @@
  *
  * As each feature lands, move its block into the matching file:
  *   TC-12            -> tests/acceptance/price-preview.test.ts
- *   TC-13 .. TC-16   -> tests/acceptance/cart.test.ts
- *   TC-17            -> tests/acceptance/orders.test.ts
+ *   TC-16 .. TC-17   -> tests/acceptance/orders.test.ts
  *   TC-18 .. TC-20   -> tests/acceptance/assistant.test.ts
  */
 
@@ -18,21 +17,7 @@ describe('TC-12 - async price preview (Part C)', () => {
   it.todo('keeps the configuration and offers Retry when /price fails');
 });
 
-describe('TC-13 - idempotent Add to Cart (Part D)', () => {
-  it.todo('three fast clicks create exactly one cart item');
-  it.todo('three fast clicks create exactly one reservation');
-});
-
-describe('TC-14 - a failed reservation holds no stock (Part D)', () => {
-  it.todo('leaves no partial reservation when the reserve call fails');
-  it.todo('keeps the configuration so Retry can succeed');
-});
-
-describe('TC-15 - reservations expire on the server clock (Part D)', () => {
-  it.todo('releases the stock once 5:00 has passed on the server clock');
-  it.todo('counts down against serverTime, not Date.now()');
-  it.todo('makes the expired item removable but not editable');
-});
+// TC-13, TC-14 and TC-15 now live in tests/acceptance/cart.test.ts.
 
 describe('TC-16 - checkout is atomic and idempotent (Part E)', () => {
   it.todo('two fast Pay clicks create exactly one order');
