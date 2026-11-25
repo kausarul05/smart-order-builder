@@ -1,0 +1,58 @@
+@import 'tailwindcss';
+
+/*
+  A plain, readable theme. Section 3 of the brief: this is a logic
+  assessment, so the UI stays clean and responsive and spends no time on
+  decoration. Light and dark both work.
+*/
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+}
+
+:root {
+  --surface: #ffffff;
+  --surface-muted: #f4f5f7;
+  --border: #e3e5e9;
+  --text: #16181d;
+  --text-muted: #5f6673;
+  --accent: #1d4ed8;
+  --danger: #b4232a;
+  --ok: #15803d;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #14161a;
+    --surface-muted: #1c1f25;
+    --border: #2b2f38;
+    --text: #eceef2;
+    --text-muted: #9aa2b1;
+    --accent: #7c9cff;
+    --danger: #ff8086;
+    --ok: #68d391;
+    color-scheme: dark;
+  }
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular figures everywhere money or a countdown is shown. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
