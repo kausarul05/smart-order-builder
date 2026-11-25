@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import App from './App';
+import AppRoot from './AppRoot';
 import { startMockServer } from './server/browser';
 import './index.css';
 
@@ -17,7 +17,7 @@ async function boot(): Promise<void> {
 
   createRoot(container).render(
     <StrictMode>
-      <App />
+      <AppRoot />
     </StrictMode>,
   );
 }

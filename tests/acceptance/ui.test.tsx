@@ -16,7 +16,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 
-import App from '@/App';
+import AppRoot from '@/AppRoot';
 import { setApiBaseUrl } from '@/api/client';
 import { handlers, setChaos } from '@/server/handlers';
 import { resetSeedLoader } from '@/server/handlers';
@@ -62,9 +62,13 @@ afterEach(() => {
 
 /** Waits for the menu to arrive from GET /api/menu. */
 async function renderApp() {
-  render(<App />);
+  render(<AppRoot />);
+  // The product name also appears in the top bar, so match the heading.
   await waitFor(
-    () => expect(screen.getByText('Build Your Breakfast')).toBeInTheDocument(),
+    () =>
+      expect(
+        screen.getByRole('heading', { name: 'Build Your Breakfast' }),
+      ).toBeInTheDocument(),
     { timeout: 5000 },
   );
 }
@@ -181,9 +185,10 @@ describe('the configurator screen', () => {
     expect(screen.getAllByText('380.00').length).toBeGreaterThanOrEqual(3);
     expect(screen.getByText('Cart subtotal')).toBeInTheDocument();
     expect(screen.getByText('VAT 5%')).toBeInTheDocument();
-    // No discount applies, so payable is 380.00 + 19.00 VAT = 399 BDT.
+    // No discount applies, so payable is 380.00 + 19.00 VAT = 399 BDT. It
+    // shows in the breakdown and again on the action bar.
     expect(screen.getByText('19.00')).toBeInTheDocument();
-    expect(screen.getByText('399.00 BDT')).toBeInTheDocument();
+    expect(screen.getAllByText('399.00 BDT').length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -220,8 +225,8 @@ describe('the cart and stock panels', () => {
 
     // The item appears with a 5-minute hold.
     await waitFor(() => expect(screen.getByText(/hold 4:5\d left/)).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^Remove this item/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^Edit this item/ })).toBeEnabled();
 
     // A used 2 eggs, so free egg stock falls from 10 to 8.
     const stock = screen.getByRole('heading', { name: 'Shared stock' }).closest('section');
@@ -238,9 +243,9 @@ describe('the cart and stock panels', () => {
     await user.click(addButton());
 
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument(),
+      expect(screen.getByRole('button', { name: /^Remove this item/ })).toBeInTheDocument(),
     );
-    await user.click(screen.getByRole('button', { name: 'Remove' }));
+    await user.click(screen.getByRole('button', { name: /^Remove this item/ }));
 
     await waitFor(() => expect(getState().cart.size).toBe(0));
     const stock = screen.getByRole('heading', { name: 'Shared stock' }).closest('section');

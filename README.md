@@ -46,10 +46,12 @@ src/
   server/          the mock backend: state, clock, MSW handlers
   api/             the single typed client; owns the server-time offset
   lib/             LatestOnly (stale-response guard), debounce
+  components/ui/   icon set, toast provider and its context
   features/
-    configurator/    option rows, headroom, violations, price preview
-    cart/            held items, server-clock countdown, edit / remove
-    checkout/        coupon, payment label, Pay, orders.json export
+    pos/             Sidebar (category rail + live stock), ProductGrid,
+                     OrderPanel (ticket, totals, Pay, assistant tab)
+    configurator/    the draft: headroom, violations, price preview
+    checkout/        orders.json export
     orderBuilder/    the one hook holding menu + stock + cart + orders
     assistant/       Gemini function calling, tool table, chat panel
 tests/
@@ -64,6 +66,15 @@ tests/
 only one implementation of the money rules and nothing can drift between
 what the server charges and what a test asserts. The same holds for
 `validate` and for the stock engine.
+
+### Responsive shape
+
+A three-column till from `lg`: a dark category rail, the product grid, and
+the order rail. Below `lg` it is one column — the rail becomes a drawer
+behind a menu button, and the order rail becomes a bottom sheet behind a
+sticky "View order · N items · total" bar. Product cards are two across on
+a phone, three from `lg`, four from `2xl`. Steppers are 36 px touch targets
+below `sm`, and nothing depends on hover.
 
 ### The menu is data, never code
 
@@ -95,23 +106,47 @@ The reasoning behind every ◆ decision point and ✋ checkpoint is in
 | Part | State |
 | --- | --- |
 | A — rules engine | Done, TC-01 … TC-04 green |
-| B — shared stock, net-difference edits | Engine done, TC-08 … TC-11 green |
+| B — shared stock, net-difference edits | Done, TC-08 … TC-11 green (engine + server + screen) |
 | C — pricing engine | Done, TC-05 … TC-07 green |
-| C — async `/price` preview | Wired: 300 ms debounce, stale-response guard, Retry on failure. TC-12's automated test outstanding |
+| C — async `/price` preview | Done, TC-12 green (300 ms debounce, stale-response guard, Retry) |
 | D — cart and reservations | Done, TC-13 … TC-15 green (atomic reserve, idempotency, net-difference swap, server-clock expiry) |
 | E — checkout and orders JSON | Done, TC-16 … TC-17 green (atomic checkout, idempotent Pay, persisted store, `Download orders.json`) |
 | F — sales assistant | Done, TC-18 … TC-20 green (Gemini function calling, 7 tools, chat panel) |
-| G — bonus | Not started, and will not be before A–F pass |
+| G — bonus | Not started. Groundwork is in place (cart versioning returns a conflict, reservations are swept against the server clock) but the brief says not to start it before A–F are correct |
 
-`npm test` currently runs 171 passing tests. The outstanding acceptance tests
-exist as `it.todo` in `tests/acceptance/pending.test.ts`, so the suite is a
-live checklist of Section 9 rather than a list that only lives in the brief.
+`npm test` runs 213 passing tests. Every acceptance test from Section 9
+(TC-01 … TC-20) exists as a real test — `tests/acceptance/pending.test.ts`
+maps each one to its file and holds the three Part G items that are
+deliberately not started.
 
 ## Trade-offs and what is unfinished
 
-- **Tailwind over a component library.** This is a logic assessment; a plain
-  responsive layout with CSS variables for the two themes is enough, and it
-  keeps the diff about the engines.
+- **Tailwind plus a small token set, no component library and no toast
+  dependency.** Every colour is a CSS variable defined once and redefined
+  for dark mode, so no component hard-codes one. Toasts are about sixty
+  lines of context and a timer, which is less than the cost of a dependency.
+- **The category rail scrolls to a group instead of filtering to it.** Every
+  group has a minimum or maximum to satisfy, so hiding four of them behind a
+  tab would mean hunting for whatever is still wrong. The rail carries each
+  group's count and a dot when it has a violation, which is the useful part.
+- **Option artwork is local SVG, not hotlinked photographs.** A hotlinked
+  photo breaks when the host changes and drags someone else's licence into
+  the repo. The illustrations live in `public/img/options/` and reach the app
+  through the menu's `image` field, so a fixture can point at photographs
+  instead with no code change. Each one is a 160×120 card filling the tile's
+  4:3 area, so the grid reads like a menu rather than a list of icons.
+- **The envelope is checked, not assumed.** Every response carries
+  `{ serverTime, data }`. A 200 that is not one of those means the request
+  fell through to the dev server, which answers any unknown path with
+  index.html — the usual cause being an MSW service worker left stale by a
+  tab that stayed open across a rebuild. The client says exactly that and
+  the shell offers a reload, rather than dying on
+  `Cannot read properties of null`.
+- **Motion is cosmetic and fails open.** `src/lib/flyTo.ts` flies a ghost of
+  the dish into the order rail, bumps the count and pulses the target. It
+  animates only `transform` and `opacity`, and it bails out silently under
+  `prefers-reduced-motion`, with no registered target, or where there is no
+  Web Animations API at all — it is never in the path of a request.
 - **`noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` are on.**
   They cost some verbosity at every `Record` lookup and buy real safety in
   code that is mostly `Record` lookups over stock and selections.

@@ -26,6 +26,13 @@ export interface MenuOption {
   readonly price: Poisha;
   /** Ingredients consumed by ONE unit of this option. */
   readonly uses: Usage;
+  /**
+   * Illustration for the POS tile. Served from the menu like every other
+   * field, so a different fixture can point at its own artwork - or at
+   * photographs - without a code change. Missing is fine: the tile falls
+   * back to the option's initials.
+   */
+  readonly image?: string;
 }
 
 /**
@@ -52,6 +59,14 @@ export interface MenuGroup {
   readonly name: string;
   readonly limits: GroupLimits;
   readonly options: readonly MenuOption[];
+  /**
+   * Name of the sidebar glyph. Presentation, but it travels with the menu
+   * so a different fixture names its own; an unknown name falls back to a
+   * generic dish rather than to nothing.
+   */
+  readonly icon?: string;
+  /** Sidebar section heading this group sits under. */
+  readonly section?: string;
 }
 
 export type Rule =

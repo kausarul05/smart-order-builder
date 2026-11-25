@@ -1,18 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { CartItemView } from '@/api/client';
+import { Icon } from '@/components/ui/Icon';
+import { useToast } from '@/components/ui/toastContext';
 import { formatBdt } from '@/domain/money';
 import { validate } from '@/domain/rules/validate';
 import { addUnits } from '@/domain/selection';
 import { stockHeadroom } from '@/domain/stock/availability';
-import type {
-  IngredientId,
-  Menu,
-  MenuOption,
-  Selection,
-  Violation,
-} from '@/domain/types';
+import type { IngredientId, Menu, Selection, Violation } from '@/domain/types';
 import type { MutationError } from '@/features/orderBuilder/useOrderBuilder';
+import { ProductGrid, type GridDensity } from '@/features/pos/ProductGrid';
+import { flyTo, registerFlyTarget } from '@/lib/flyTo';
 import { PriceBreakdownPanel } from './PriceBreakdownPanel';
 import { usePricePreview } from './usePricePreview';
 
@@ -27,6 +25,11 @@ export interface ConfiguratorProps {
   onAdd(selection: Selection, qty: number): Promise<boolean>;
   onSave(selection: Selection, qty: number): Promise<boolean>;
   onCancelEdit(): void;
+  onSelectionChange?(
+    selection: Selection,
+    violationGroupIds: ReadonlySet<string>,
+    issueCount: number,
+  ): void;
 }
 
 /** Limit codes that cap a group; min and step must stay reachable. */
@@ -34,9 +37,17 @@ const CAP_CODES = new Set(['max', 'maxDistinct', 'maxPerOption']);
 
 export function Configurator(props: ConfiguratorProps) {
   const { menu, available, editingItem, busy, mutationError } = props;
+  const toast = useToast();
 
   const [selection, setSelection] = useState<Selection>({});
   const [qty, setQty] = useState(menu.itemQty.min);
+  const [query, setQuery] = useState('');
+  const [density, setDensity] = useState<GridDensity>('grid');
+
+  // Picking an option flies a ghost into this button; pressing it flies
+  // one on into the order rail.
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => registerFlyTarget('draft', addButtonRef.current), []);
 
   // Entering edit mode seeds the draft from the item being edited.
   useEffect(() => {
@@ -60,7 +71,20 @@ export function Configurator(props: ConfiguratorProps) {
 
   const capCount = useMemo(() => countCaps(violations), [violations]);
 
-  /** Stock headroom and limit headroom, combined, per option. */
+  const violationGroupIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const violation of violations) {
+      if (violation.scope.kind === 'group') ids.add(violation.scope.groupId);
+    }
+    return ids;
+  }, [violations]);
+
+  const { onSelectionChange } = props;
+  useEffect(() => {
+    onSelectionChange?.(selection, violationGroupIds, violations.length);
+  }, [onSelectionChange, selection, violationGroupIds, violations.length]);
+
+  /** Stock headroom and group-limit headroom, combined, per option. */
   const headroom = useMemo(() => {
     const out: Record<string, number> = {};
     for (const group of menu.groups) {
@@ -83,230 +107,258 @@ export function Configurator(props: ConfiguratorProps) {
   };
 
   const submit = async (): Promise<void> => {
-    const ok =
-      editingItem === null
-        ? await props.onAdd(selection, qty)
-        : await props.onSave(selection, qty);
-    if (ok && editingItem === null) reset();
+    const editing = editingItem !== null;
+    const source = addButtonRef.current;
+
+    const ok = editing
+      ? await props.onSave(selection, qty)
+      : await props.onAdd(selection, qty);
+
+    if (!ok) return; // the error toast is raised by the owner of the request
+
+    if (!editing && source !== null) {
+      flyTo('cart', source, { imageSrc: leadImage(menu, selection), size: 60 });
+    }
+
+    if (editing) {
+      toast.success('Item updated', 'The swap was served from what it already held.');
+    } else {
+      toast.success(
+        'Added to the order',
+        `${qty} × ${menu.productName} — ingredients held for 5 minutes.`,
+      );
+      reset();
+    }
   };
 
+  const payable = preview.breakdown?.payable;
+
   return (
-    <section>
-      <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold">
-          {editingItem === null ? menu.productName : 'Editing a cart item'}
-        </h2>
-        <p className="text-xs tnum" style={{ color: 'var(--text-muted)' }}>
-          Base {formatBdt(menu.basePrice)} · fixture {menu.version}
+    <div className="flex h-full min-h-0 flex-col">
+      {/* ---------------------------------------------------------- header */}
+      <header
+        className="shrink-0 border-b px-4 py-3 sm:px-6"
+        style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-lg font-semibold">
+            {editingItem === null ? menu.productName : 'Editing a held item'}
+          </h2>
+
+          <label className="relative ml-auto min-w-0 flex-1 sm:max-w-xs">
+            <span className="sr-only">Search the menu</span>
+            <span
+              className="pointer-events-none absolute inset-y-0 left-3 grid place-items-center"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <Icon name="search" className="size-4" />
+            </span>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search"
+              className="field pl-9"
+              type="search"
+            />
+          </label>
+
+          <div
+            className="hidden items-center gap-0.5 rounded-lg border p-0.5 sm:flex"
+            style={{ borderColor: 'var(--border-strong)' }}
+            role="group"
+            aria-label="Layout"
+          >
+            {(['grid', 'list'] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-label={`${value} layout`}
+                aria-pressed={density === value}
+                onClick={() => setDensity(value)}
+                className="grid size-7 place-items-center rounded-md"
+                style={
+                  density === value
+                    ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
+                    : { color: 'var(--text-muted)' }
+                }
+              >
+                <Icon name={value} className="size-4" />
+              </button>
+            ))}
+          </div>
+
+          <label className="flex items-center gap-2 text-sm">
+            <span style={{ color: 'var(--text-muted)' }}>Quantity</span>
+            <select
+              value={qty}
+              disabled={busy}
+              onChange={(event) => setQty(Number(event.target.value))}
+              className="field w-auto py-1.5"
+            >
+              {quantities(menu).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <p className="mt-1 text-xs tnum" style={{ color: 'var(--text-muted)' }}>
+          Base {formatBdt(menu.basePrice)} · fixture {menu.version} · quantity
+          multiplies ingredient usage
         </p>
+
+        {editingItem !== null && (
+          <p
+            className="mt-2.5 rounded-lg px-3 py-2 text-xs"
+            style={{ background: 'var(--accent-soft)' }}
+          >
+            This item already holds its ingredients, so they count as available
+            to itself — only the extra beyond what it holds has to be found in
+            free stock.{' '}
+            <button
+              type="button"
+              className="font-medium underline"
+              onClick={props.onCancelEdit}
+              disabled={busy}
+            >
+              Cancel edit
+            </button>
+          </p>
+        )}
       </header>
 
-      {editingItem !== null && (
-        <p
-          className="mt-3 rounded-lg px-3 py-2 text-sm"
-          style={{ background: 'var(--surface-muted)' }}
-        >
-          This item already holds its ingredients, so they count as available
-          to itself. Only the extra beyond what it holds has to be found in
-          free stock.{' '}
+      {/* ------------------------------------------------------ scroll area */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+        <ProductGrid
+          menu={menu}
+          selection={selection}
+          headroom={headroom}
+          density={density}
+          query={query}
+          disabled={busy}
+          onChange={(optionId, delta) =>
+            setSelection((current) => addUnits(current, optionId, delta))
+          }
+        />
+
+        {/* Every violation, never just the first. */}
+        {violations.length > 0 && (
+          <ul className="mt-6 space-y-1.5" aria-live="polite">
+            {violations.map((violation, index) => (
+              <li
+                key={`${scopeId(violation)}-${violation.code}-${index}`}
+                className="flex items-start gap-2 rounded-lg px-3 py-2 text-sm"
+                style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}
+              >
+                <span aria-hidden className="font-bold">
+                  !
+                </span>
+                <span className="flex-1">
+                  {violation.message}
+                  <span className="ml-1.5 text-xs opacity-70">
+                    [{scopeId(violation)}
+                    {violation.viaOverride === undefined
+                      ? ''
+                      : ` via ${violation.viaOverride}`}
+                    ]
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <PriceBreakdownPanel
+          preview={preview}
+          qty={qty}
+          enabled={isValid}
+          vatPercent={menu.promotions.vatPercent}
+        />
+
+        {/* Kept inline as well as in a toast: a shortage is worth re-reading. */}
+        {mutationError !== null && (
+          <div
+            className="mt-4 rounded-xl px-3 py-2.5 text-sm"
+            style={{ background: 'var(--danger-soft)' }}
+            role="alert"
+          >
+            <p className="font-medium" style={{ color: 'var(--danger)' }}>
+              {mutationError.message}
+            </p>
+            {mutationError.shortages.length > 0 && (
+              <ul className="mt-1 tnum text-xs" style={{ color: 'var(--danger)' }}>
+                {mutationError.shortages.map((shortage) => (
+                  <li key={shortage.ingredientId}>
+                    {shortage.missing} {shortage.name} short
+                  </li>
+                ))}
+              </ul>
+            )}
+            {mutationError.retryable && (
+              <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                Your configuration is kept — press the button again to retry.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ------------------------------------------------------ action bar */}
+      <div
+        className="shrink-0 border-t px-4 py-3 sm:px-6"
+        style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+      >
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              {isValid ? 'This item' : `${violations.length} to fix`}
+            </p>
+            <p className="tnum truncate text-sm font-semibold">
+              {isValid && payable !== undefined
+                ? formatBdt(payable)
+                : isValid
+                  ? 'pricing…'
+                  : 'not ready'}
+            </p>
+          </div>
+
           <button
             type="button"
-            className="underline"
-            onClick={props.onCancelEdit}
             disabled={busy}
+            onClick={reset}
+            className="btn-ghost px-3 py-2.5 text-sm"
           >
-            Cancel edit
+            Clear
           </button>
-        </p>
-      )}
-
-      <div className="mt-4 space-y-4">
-        {menu.groups.map((group) => (
-          <article
-            key={group.id}
-            className="rounded-xl border p-4"
-            style={{ borderColor: 'var(--border)' }}
+          <button
+            ref={addButtonRef}
+            type="button"
+            // Disabled while ANY violation exists.
+            disabled={!isValid || busy}
+            onClick={() => void submit()}
+            className="btn-primary flex items-center gap-2 px-4 py-2.5 text-sm"
           >
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h3 className="font-medium">{group.name}</h3>
-              <p className="text-xs tnum" style={{ color: 'var(--text-muted)' }}>
-                {describeLimits(group)}
-              </p>
-            </div>
-
-            <ul className="mt-3 space-y-2">
-              {group.options.map((option) => (
-                <OptionRow
-                  key={option.id}
-                  option={option}
-                  units={selection[option.id] ?? 0}
-                  headroom={headroom[option.id] ?? 0}
-                  disabled={busy}
-                  onChange={(delta) =>
-                    setSelection((current) => addUnits(current, option.id, delta))
-                  }
-                />
-              ))}
-            </ul>
-          </article>
-        ))}
-      </div>
-
-      <div className="mt-5 flex flex-wrap items-center gap-4">
-        <label className="flex items-center gap-2 text-sm">
-          <span>Quantity</span>
-          <select
-            value={qty}
-            disabled={busy}
-            onChange={(event) => setQty(Number(event.target.value))}
-            className="rounded-lg border px-2 py-1 text-sm"
-            style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
-          >
-            {quantities(menu).map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-          Quantity multiplies ingredient usage.
-        </p>
-      </div>
-
-      {/* Every violation, not just the first one. */}
-      {violations.length > 0 && (
-        <ul className="mt-4 space-y-1" aria-live="polite">
-          {violations.map((violation, index) => (
-            <li
-              key={`${scopeId(violation)}-${violation.code}-${index}`}
-              className="text-sm"
-              style={{ color: 'var(--danger)' }}
-            >
-              {violation.message}
-              <span className="ml-2 text-xs opacity-70">
-                [{scopeId(violation)}
-                {violation.viaOverride === undefined ? '' : ` via ${violation.viaOverride}`}]
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <PriceBreakdownPanel
-        preview={preview}
-        qty={qty}
-        enabled={isValid}
-        vatPercent={menu.promotions.vatPercent}
-      />
-
-      {mutationError !== null && (
-        <div
-          className="mt-4 rounded-lg px-3 py-2 text-sm"
-          style={{ background: 'var(--surface-muted)', color: 'var(--danger)' }}
-          role="alert"
-        >
-          <p className="font-medium">{mutationError.message}</p>
-          {mutationError.shortages.length > 0 && (
-            <ul className="mt-1 tnum">
-              {mutationError.shortages.map((shortage) => (
-                <li key={shortage.ingredientId}>
-                  {shortage.missing} {shortage.name} short
-                </li>
-              ))}
-            </ul>
-          )}
-          {mutationError.retryable && (
-            <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-              Your configuration is kept — press the button again to retry.
-            </p>
-          )}
+            <Icon name="cart" className="size-4" />
+            {busy ? 'Working…' : editingItem === null ? 'Add to Cart' : 'Save changes'}
+          </button>
         </div>
-      )}
-
-      <div className="mt-5 flex flex-wrap gap-2">
-        <button
-          type="button"
-          // Disabled while ANY violation exists.
-          disabled={!isValid || busy}
-          onClick={() => void submit()}
-          className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
-          style={{ background: 'var(--accent)', color: 'var(--surface)' }}
-        >
-          {busy
-            ? 'Working…'
-            : editingItem === null
-              ? 'Add to Cart'
-              : 'Save changes'}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={reset}
-          className="rounded-lg border px-4 py-2 text-sm disabled:opacity-50"
-          style={{ borderColor: 'var(--border)' }}
-        >
-          Clear
-        </button>
       </div>
-    </section>
+    </div>
   );
 }
 
-function OptionRow(props: {
-  readonly option: MenuOption;
-  readonly units: number;
-  readonly headroom: number;
-  readonly disabled: boolean;
-  onChange(delta: number): void;
-}) {
-  const { option, units, headroom, disabled } = props;
-  const soldOut = headroom <= 0;
-
-  return (
-    <li
-      className="flex flex-wrap items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm"
-      style={{ background: 'var(--surface-muted)' }}
-    >
-      <span className="flex-1">
-        {option.name}
-        <span className="ml-2 tnum" style={{ color: 'var(--text-muted)' }}>
-          {formatBdt(option.price)}
-        </span>
-      </span>
-
-      <span className="tnum text-xs" style={{ color: 'var(--text-muted)' }}>
-        {Number.isFinite(headroom)
-          ? `${headroom} more can be added`
-          : 'unlimited'}
-      </span>
-
-      <span className="flex items-center gap-1">
-        <button
-          type="button"
-          aria-label={`Remove one ${option.name}`}
-          disabled={disabled || units === 0}
-          onClick={() => props.onChange(-1)}
-          className="size-7 rounded-md border disabled:opacity-40"
-          style={{ borderColor: 'var(--border)' }}
-        >
-          −
-        </button>
-        <span className="w-6 text-center tnum">{units}</span>
-        <button
-          type="button"
-          aria-label={`Add one ${option.name}`}
-          // Disabled at 0 headroom, whether that is stock or a group limit.
-          disabled={disabled || soldOut}
-          onClick={() => props.onChange(1)}
-          className="size-7 rounded-md border disabled:opacity-40"
-          style={{ borderColor: 'var(--border)' }}
-        >
-          +
-        </button>
-      </span>
-    </li>
-  );
+/** The artwork of the first selected option, for the ghost that flies. */
+function leadImage(menu: Menu, selection: Selection): string | undefined {
+  for (const group of menu.groups) {
+    for (const option of group.options) {
+      if ((selection[option.id] ?? 0) > 0 && option.image !== undefined) {
+        return option.image;
+      }
+    }
+  }
+  return undefined;
 }
 
 function countCaps(violations: readonly Violation[]): number {
@@ -314,9 +366,7 @@ function countCaps(violations: readonly Violation[]): number {
 }
 
 function scopeId(violation: Violation): string {
-  return violation.scope.kind === 'group'
-    ? violation.scope.groupId
-    : violation.scope.ruleId;
+  return violation.scope.kind === 'group' ? violation.scope.groupId : violation.scope.ruleId;
 }
 
 function quantities(menu: Menu): readonly number[] {
@@ -325,15 +375,4 @@ function quantities(menu: Menu): readonly number[] {
     out.push(value);
   }
   return out;
-}
-
-function describeLimits(group: Menu['groups'][number]): string {
-  const { limits } = group;
-  const parts: string[] = [];
-  if (limits.min !== undefined) parts.push(`min ${limits.min}`);
-  if (limits.max !== undefined) parts.push(`max ${limits.max}`);
-  if (limits.step !== undefined) parts.push(`step ${limits.step}`);
-  if (limits.maxDistinct !== undefined) parts.push(`max ${limits.maxDistinct} distinct`);
-  if (limits.maxPerOption !== undefined) parts.push(`max ${limits.maxPerOption} each`);
-  return parts.join(' · ');
 }

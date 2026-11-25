@@ -108,7 +108,13 @@ export class ApiClient {
       throw new ApiError(0, 'network', 'Could not reach the server');
     }
 
-    const payload: unknown = await response.json().catch(() => null);
+    const raw = await response.text().catch(() => '');
+    let payload: unknown = null;
+    try {
+      payload = raw === '' ? null : JSON.parse(raw);
+    } catch {
+      payload = null;
+    }
 
     if (!response.ok) {
       const error =
@@ -123,13 +129,31 @@ export class ApiClient {
       );
     }
 
-    const envelope = payload as Envelope<T>;
-    const serverTime = Date.parse(envelope.serverTime);
+    /**
+     * A 200 that is not one of our envelopes means the mock server did not
+     * answer: the request fell through to the dev server, which serves
+     * index.html for any unknown path. That happens when the MSW service
+     * worker is missing or stale - typically a tab left open across a
+     * rebuild. Say so, instead of throwing
+     * "Cannot read properties of null (reading 'serverTime')".
+     */
+    if (!isEnvelope<T>(payload)) {
+      throw new ApiError(
+        response.status,
+        'mock_server_missing',
+        looksLikeHtml(raw)
+          ? `The mock server did not answer ${path}. Reload the page to reinstall it.`
+          : `Unexpected response from ${path}.`,
+        payload,
+      );
+    }
+
+    const serverTime = Date.parse(payload.serverTime);
     if (!Number.isNaN(serverTime)) {
       this.offsetMs = serverTime - Date.now();
       this.offsetKnown = true;
     }
-    return envelope.data;
+    return payload.data;
   }
 
   getMenu(): Promise<{ menu: Menu; stock: Readonly<Record<IngredientId, number>> }> {
@@ -214,6 +238,19 @@ export class ApiClient {
 export interface CartItemView extends CartItem {
   readonly expiresInMs: number;
   readonly editable: boolean;
+}
+
+function isEnvelope<T>(payload: unknown): payload is Envelope<T> {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'serverTime' in payload &&
+    'data' in payload
+  );
+}
+
+function looksLikeHtml(raw: string): boolean {
+  return /^\s*<(!doctype|html)/i.test(raw);
 }
 
 export const api = new ApiClient();

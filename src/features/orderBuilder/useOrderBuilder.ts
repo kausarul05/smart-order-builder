@@ -39,6 +39,8 @@ export interface OrderBuilder {
   readonly items: readonly CartItemView[];
   readonly orders: readonly StoredOrder[];
   readonly loadError: string | null;
+  /** The ApiError code behind `loadError`, so the shell can offer a fix. */
+  readonly loadErrorCode: string | null;
   readonly busy: boolean;
   readonly mutationError: MutationError | null;
   readonly editing: Editing | null;
@@ -61,6 +63,7 @@ export function useOrderBuilder(): OrderBuilder {
   const [items, setItems] = useState<readonly CartItemView[]>([]);
   const [orders, setOrders] = useState<readonly StoredOrder[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadErrorCode, setLoadErrorCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [mutationError, setMutationError] = useState<MutationError | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -84,8 +87,10 @@ export function useOrderBuilder(): OrderBuilder {
       setItems(cart.items);
       setOrders(stored);
       setLoadError(null);
+      setLoadErrorCode(null);
     } catch (cause) {
       setLoadError(describe(cause));
+      setLoadErrorCode(cause instanceof ApiError ? cause.code : null);
     }
   }, []);
 
@@ -98,7 +103,9 @@ export function useOrderBuilder(): OrderBuilder {
         setMenu(loaded);
         await refresh();
       } catch (cause) {
-        if (!cancelled) setLoadError(describe(cause));
+        if (cancelled) return;
+        setLoadError(describe(cause));
+        setLoadErrorCode(cause instanceof ApiError ? cause.code : null);
       }
     })();
     return () => {
@@ -231,6 +238,7 @@ export function useOrderBuilder(): OrderBuilder {
     items,
     orders,
     loadError,
+    loadErrorCode,
     busy,
     mutationError,
     editing,
