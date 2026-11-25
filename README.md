@@ -46,7 +46,12 @@ src/
   server/          the mock backend: state, clock, MSW handlers
   api/             the single typed client; owns the server-time offset
   lib/             LatestOnly (stale-response guard), debounce
-  features/        configurator / cart / checkout / assistant
+  features/
+    configurator/    option rows, headroom, violations, price preview
+    cart/            held items, server-clock countdown, edit / remove
+    checkout/        coupon, payment label, Pay, orders.json export
+    orderBuilder/    the one hook holding menu + stock + cart + orders
+    assistant/       Gemini tool table (Part F, not wired yet)
 tests/
   fixtures/        configurations A, B, C from Section 9
   acceptance/      TC-01 .. TC-20, named after the brief
@@ -92,13 +97,13 @@ The reasoning behind every ◆ decision point and ✋ checkpoint is in
 | A — rules engine | Done, TC-01 … TC-04 green |
 | B — shared stock, net-difference edits | Engine done, TC-08 … TC-11 green |
 | C — pricing engine | Done, TC-05 … TC-07 green |
-| C — async `/price` preview | Endpoint done (300 ms debounce, 200–1500 ms latency, 15 % failure); wiring + TC-12 outstanding |
+| C — async `/price` preview | Wired: 300 ms debounce, stale-response guard, Retry on failure. TC-12's automated test outstanding |
 | D — cart and reservations | Done, TC-13 … TC-15 green (atomic reserve, idempotency, net-difference swap, server-clock expiry) |
 | E — checkout and orders JSON | Done, TC-16 … TC-17 green (atomic checkout, idempotent Pay, persisted store, `Download orders.json`) |
 | F — sales assistant | Stats functions and tool table done; Gemini round trip outstanding |
 | G — bonus | Not started, and will not be before A–F pass |
 
-`npm test` currently runs 126 passing tests. The outstanding acceptance tests
+`npm test` currently runs 135 passing tests. The outstanding acceptance tests
 exist as `it.todo` in `tests/acceptance/pending.test.ts`, so the suite is a
 live checklist of Section 9 rather than a list that only lives in the brief.
 

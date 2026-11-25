@@ -16,6 +16,7 @@
 
 import { couponOutcome, priceCart } from '@/domain/pricing/priceCart';
 import { toIsoWithOffset } from '@/domain/time';
+import { PAYMENT_METHODS } from '@/domain/types';
 import type {
   OrderLine,
   OrdersFile,
@@ -32,8 +33,6 @@ import {
   saveOrdersToStorage,
   sweepExpired,
 } from './state';
-
-export const PAYMENT_METHODS: readonly PaymentMethod[] = ['card', 'bkash', 'cash'];
 
 export type CheckoutFailure =
   | { readonly code: 'empty_cart'; readonly message: string }

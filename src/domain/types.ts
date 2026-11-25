@@ -284,6 +284,9 @@ export interface CartItem {
 
 export type PaymentMethod = 'card' | 'bkash' | 'cash';
 
+/** The payment method is a label only; no payment data is ever collected. */
+export const PAYMENT_METHODS: readonly PaymentMethod[] = ['card', 'bkash', 'cash'];
+
 export interface OrderLine {
   readonly qty: number;
   readonly options: Selection;

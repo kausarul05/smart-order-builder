@@ -15,18 +15,49 @@ import type {
   PaymentMethod,
   PriceBreakdown,
   Selection,
+  Shortage,
   StoredOrder,
+  Violation,
 } from '@/domain/types';
+
+/**
+ * Requests use relative paths in the browser. Node's fetch cannot resolve a
+ * relative URL, so the component tests point this at the jsdom origin.
+ */
+let baseUrl = '';
+
+export function setApiBaseUrl(url: string): void {
+  baseUrl = url.replace(/\/$/, '');
+}
 
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /**
+   * The whole error body, so a caller can read the extras the server sent -
+   * `shortages` for a 409 and `violations` for a 422.
+   */
+  readonly body: unknown;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, body?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.body = body;
+  }
+
+  /** The exact per-ingredient shortages behind "Short: 2 egg, 2 cheese". */
+  get shortages(): readonly Shortage[] {
+    if (typeof this.body !== 'object' || this.body === null) return [];
+    const { shortages } = this.body as { shortages?: unknown };
+    return Array.isArray(shortages) ? (shortages as Shortage[]) : [];
+  }
+
+  get violations(): readonly Violation[] {
+    if (typeof this.body !== 'object' || this.body === null) return [];
+    const { violations } = this.body as { violations?: unknown };
+    return Array.isArray(violations) ? (violations as Violation[]) : [];
   }
 }
 
@@ -65,7 +96,7 @@ export class ApiClient {
   ): Promise<T> {
     let response: Response;
     try {
-      response = await fetch(path, {
+      response = await fetch(`${baseUrl}${path}`, {
         ...init,
         headers: {
           'Content-Type': 'application/json',
@@ -88,6 +119,7 @@ export class ApiClient {
         response.status,
         error.error ?? 'unknown',
         error.message ?? `Request failed with ${response.status}`,
+        payload,
       );
     }
 
