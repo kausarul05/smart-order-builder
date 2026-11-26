@@ -5,7 +5,7 @@
  * `.env.local`, which is git-ignored; `.env.example` ships with the name
  * and no value. The real key goes in the submission form, never in a commit.
  *
- * TODO(Part F): one `askAssistant` round trip -
+ * One `askAssistant` round trip, implemented in `askAssistant.ts`:
  *   1  send the question with `functionDeclarations()` and SYSTEM_INSTRUCTION
  *   2  read the functionCall the model chose
  *   3  run `toolByName(call.name).run(call.args, context)` locally

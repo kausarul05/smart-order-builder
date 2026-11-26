@@ -133,10 +133,11 @@ The reasoning behind every ◆ decision point and ✋ checkpoint is in
 | F — sales assistant | Done, TC-18 … TC-20 green (Gemini function calling, 7 tools, chat panel) |
 | G — bonus | Done, after A–F. A refresh keeps only still-valid reservations, a stale tab gets a conflict instead of overwriting, and an unfinished plate survives a refresh |
 
-`npm test` runs 299 passing tests. Every acceptance test from Section 9
-(TC-01 … TC-20) exists as a real test — `tests/acceptance/pending.test.ts`
-maps each one to its file and holds the three Part G items that are
-deliberately not started.
+`npm test` runs 321 passing tests, with nothing skipped or pending. Every
+acceptance test from Section 9 (TC-01 … TC-20) exists as a real test, and
+`tests/acceptance/coverage.test.ts` enforces that: it fails the suite if a
+TC id ever loses the test that covers it, or if a placeholder test is left
+behind.
 
 ## Trade-offs and what is unfinished
 
