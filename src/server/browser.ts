@@ -2,6 +2,7 @@
 
 import { setupWorker } from 'msw/browser';
 import { setApiRevive } from '@/api/client';
+import { activateMockServer } from './activate';
 import { handlers } from './handlers';
 import { SERVER_STORAGE_KEY, restoreState } from './state';
 
@@ -27,41 +28,56 @@ const WORKER_OPTIONS = {
 } as const;
 
 /**
- * Re-runs MSW's activation handshake.
+ * Puts the mock server back in charge of this page.
  *
- * The service worker keeps its list of active clients in memory, and the
- * browser terminates an idle service worker after about half a minute. On
- * restart that list is empty, and until this page says "I am here" again
- * the worker passes requests through to the network: index.html on the dev
- * server, a bare 404 on a static host. `worker.start()` is how that
- * handshake is sent, so calling it again is the repair.
+ * Two tiers, because there are two ways to lose it and only one of them is
+ * common. See `activate.ts` for why the usual one happens and why
+ * `worker.start()` cannot fix it.
  *
- * Concurrent callers share one attempt - a cart refresh fires three
- * requests at once, and they must not each re-register the worker. A
- * revive that hangs is abandoned after three seconds so a stuck
- * registration cannot stall the request waiting on it.
+ * Concurrent callers share one attempt, and an attempt that hangs is
+ * abandoned after four seconds so a stuck registration cannot stall the
+ * request waiting on it. It never rejects: a failure here must not become
+ * an unhandled rejection on an event listener, and the request waiting on
+ * it gets its second attempt either way.
  */
 let reviving: Promise<void> | null = null;
 
 async function revive(): Promise<void> {
   reviving ??= (async () => {
-    // Never rejects: a failed re-registration must not become an unhandled
-    // rejection on the visibility listener, and the request waiting on
-    // this gets its second attempt either way.
-    const started = worker.start(WORKER_OPTIONS).then(
-      () => undefined,
-      () => undefined,
-    );
     try {
       await Promise.race([
-        started,
-        new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+        repair(),
+        new Promise<void>((resolve) => setTimeout(resolve, 4000)),
       ]);
     } finally {
       reviving = null;
     }
   })();
   await reviving;
+}
+
+async function repair(): Promise<void> {
+  // Tier 1, and nearly always the answer: the worker is still registered
+  // and still controls this page, it has simply forgotten the page after
+  // being terminated. One message puts it back.
+  if (await activateMockServer()) return;
+
+  /*
+    Nothing acknowledged, so there may be no registration left to talk to -
+    devtools "Unregister", the worker unregistering itself as the last tab
+    closed, or a page the worker never took control of. Only a fresh
+    registration helps, and `worker.start()` on its own is a no-op while
+    MSW believes mocking is enabled, so mocking has to be stopped first.
+  */
+  try {
+    worker.stop();
+  } catch {
+    // Already stopped; the start below is the part that matters.
+  }
+  await worker.start(WORKER_OPTIONS).then(
+    () => undefined,
+    () => undefined,
+  );
 }
 
 export async function startMockServer(): Promise<void> {
@@ -93,4 +109,12 @@ export async function startMockServer(): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void revive();
   });
+
+  /*
+    ...and a worker that takes control after this page loaded - a rebuild,
+    or the re-registration above - has never been told about this page.
+  */
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('controllerchange', () => void revive());
+  }
 }

@@ -9,7 +9,16 @@
  * dead screen and a reload button.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 
@@ -296,5 +305,94 @@ describe('a request that slipped past the mock server', () => {
       api.addToCart({ selection: { toast: 1 }, qty: 1 }, 'intent-1'),
     ).rejects.toMatchObject({ code: 'shortage' });
     expect(calls).toBe(1);
+  });
+});
+
+/**
+ * Recovering after the fact works, but the user still waited for a request
+ * that was never going to arrive. The handshake is one `postMessage`, so
+ * after a quiet spell - a tab left in the background, where timers are
+ * throttled to about a tick a minute and the worker is terminated between
+ * pings - it is re-sent before the request rather than after it fails.
+ */
+describe('the handshake sent before a request, after a quiet spell', () => {
+  const envelope = (data: unknown) =>
+    HttpResponse.json({ serverTime: new Date().toISOString(), data });
+
+  /** Moves the app's idea of "now" on without touching the mock server. */
+  const quietFor = (ms: number) => {
+    const real = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(real + ms);
+  };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('re-sends it when nothing has been heard for long enough', async () => {
+    let revived = 0;
+    let calls = 0;
+    server.use(
+      http.get('/api/stock', () => {
+        calls += 1;
+        return envelope({ available: { egg: 10 } });
+      }),
+    );
+    setApiRevive(async () => {
+      revived += 1;
+    });
+
+    quietFor(11_000);
+    await api.getStock();
+
+    // Sent up front, and the request itself needed no second attempt.
+    expect(revived).toBe(1);
+    expect(calls).toBe(1);
+  });
+
+  it('does not re-send it on a request that follows a recent one', async () => {
+    let revived = 0;
+    server.use(http.get('/api/stock', () => envelope({ available: { egg: 10 } })));
+    setApiRevive(async () => {
+      revived += 1;
+    });
+
+    await api.getStock();
+    await api.getStock();
+
+    expect(revived).toBe(0);
+  });
+
+  it('sends one handshake for a burst of requests, not one each', async () => {
+    // The cart refresh fires stock, cart and orders together.
+    let revived = 0;
+    server.use(
+      http.get('/api/stock', () => envelope({ available: {} })),
+      http.get('/api/cart', () => envelope({ items: [], cartVersion: 0 })),
+      http.get('/api/orders', () => envelope({ orders: [] })),
+    );
+    setApiRevive(async () => {
+      revived += 1;
+    });
+
+    quietFor(60_000);
+    await Promise.all([api.getStock(), api.getCart(), api.getOrders()]);
+
+    expect(revived).toBe(1);
+  });
+
+  it('is never sent in a test that registered no way to revive', async () => {
+    // Node has no service worker, so nothing may happen behind a test.
+    server.use(http.get('/api/stock', () => envelope({ available: { egg: 1 } })));
+    setApiRevive(null);
+
+    quietFor(600_000);
+    await expect(api.getStock()).resolves.toMatchObject({ available: { egg: 1 } });
+  });
+
+  it('still makes the request when the handshake itself throws', async () => {
+    server.use(http.get('/api/stock', () => envelope({ available: { egg: 2 } })));
+    setApiRevive(() => Promise.reject(new Error('no registration')));
+
+    quietFor(11_000);
+    await expect(api.getStock()).resolves.toMatchObject({ available: { egg: 2 } });
   });
 });

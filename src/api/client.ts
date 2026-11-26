@@ -31,15 +31,36 @@ export function setApiBaseUrl(url: string): void {
 }
 
 /**
- * How to bring the mock server back when a request slipped past it. The
- * browser entry point registers MSW's activation handshake here; Node
- * tests leave it unset, so nothing is ever retried behind a test's back.
+ * How to bring the mock server back. The browser entry point registers
+ * MSW's activation handshake here; Node tests leave it unset, so nothing is
+ * ever revived or retried behind a test's back.
  */
 let revive: (() => Promise<void>) | null = null;
 
+/** When the mock server last proved it was still answering for this page. */
+let lastAnswered = 0;
+
 export function setApiRevive(fn: (() => Promise<void>) | null): void {
   revive = fn;
+  // Registering it means the worker has just completed its handshake, so
+  // the app has heard from the mock server as recently as it ever will.
+  lastAnswered = fn === null ? 0 : Date.now();
 }
+
+/**
+ * How long the app may go without hearing from the mock server before the
+ * next request re-sends the activation handshake *first*.
+ *
+ * The browser terminates a service worker that has been idle for about half
+ * a minute, and a backgrounded tab's timers are throttled to roughly one
+ * tick a minute, so the gap is real: the tab comes back, the user taps an
+ * option, and the request is made to a worker that has forgotten this page.
+ * Recovering afterwards works, but the handshake is a single `postMessage`,
+ * so doing it up front after a quiet spell is cheaper than a wasted request
+ * and leaves nothing for the user to see. A screen in use never reaches
+ * this at all - the cart refreshes every five seconds.
+ */
+const STALE_AFTER_MS = 10_000;
 
 export class ApiError extends Error {
   readonly status: number;
@@ -121,6 +142,8 @@ export class ApiClient {
    * `Idempotency-Key` on top of that.
    */
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    await handshakeIfQuiet();
+
     const first = await this.attempt<T>(path, init);
     if (first.ok) return first.data;
 
@@ -218,6 +241,9 @@ export class ApiClient {
       this.offsetMs = serverTime - Date.now();
       this.offsetKnown = true;
     }
+    // An envelope can only have come from our handlers, so the worker is
+    // demonstrably still mocking for this page.
+    lastAnswered = Date.now();
     return { ok: true, data: payload.data };
   }
 
@@ -307,6 +333,25 @@ export class ApiClient {
 export interface CartItemView extends CartItem {
   readonly expiresInMs: number;
   readonly editable: boolean;
+}
+
+/**
+ * Re-sends the activation handshake before a request, when the app has not
+ * heard from the mock server for long enough that the worker could have
+ * been terminated in the meantime.
+ *
+ * `lastAnswered` is moved before the await on purpose: a cart refresh fires
+ * three requests at once, and one handshake per quiet spell is the point.
+ */
+async function handshakeIfQuiet(): Promise<void> {
+  if (revive === null) return;
+  if (Date.now() - lastAnswered <= STALE_AFTER_MS) return;
+  lastAnswered = Date.now();
+  try {
+    await revive();
+  } catch {
+    // The request still goes out, and the recovery below still applies.
+  }
 }
 
 /** The shape every failure OUR handlers return. Anything else is not ours. */

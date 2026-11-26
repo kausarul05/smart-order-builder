@@ -44,7 +44,8 @@ src/
     stats/           Part F  the numbers behind the chatbot
   fixtures/        Appendix A as data, plus an unrelated second menu
                    — imported ONLY by src/server
-  server/          the mock backend: state, clock, MSW handlers
+  server/          the mock backend: state, clock, MSW handlers, and the
+                   service-worker handshake that keeps it answering
   api/             the single typed client; owns the server-time offset
   lib/             LatestOnly (stale-response guard), debounce
   components/ui/   icon set, toast provider and its context
@@ -70,23 +71,35 @@ what the server charges and what a test asserts. The same holds for
 
 ### The one thing a deployed build does that localhost does not
 
-MSW's service worker keeps its list of active clients in memory, and the
-browser terminates an idle service worker. When it restarts, that list is
-empty until the page repeats the activation handshake, and a request made in
-that window is passed through to the network. The dev server answers an
-unknown path with `index.html`, so locally it looks like a stale worker; a
-static host answers with a bare **404**, which is why this only appeared on
-the deployed site and why pressing Retry made it go away.
+MSW's service worker keeps the ids of the pages it is mocking for in a
+plain `Set`, in the worker's own memory, and bypasses any request made while
+that `Set` is empty. The browser terminates a service worker that has been
+idle for about half a minute, and on restart that `Set` is empty. Three
+things then make the damage permanent: MSW fills it exactly once, during
+`worker.start()`, by posting `MOCK_ACTIVATE`; its keep-alive ping wakes the
+worker but never re-adds the page, and a backgrounded tab's timers are
+throttled to roughly one tick a minute, which is long enough for the worker
+to be terminated between pings; and calling `worker.start()` again does
+nothing, because MSW logs "Found a redundant worker.start() call" and
+returns.
 
-So `src/api/client.ts` treats a response that carries no `error` code of
-ours as "that did not come from the mock server", revives the worker and
-makes the request once more, rather than reporting a 404 nobody can act on.
-Retrying is safe because the first attempt never reached the server, and
-every write carries an `Idempotency-Key` regardless. A failure the mock
-server composed itself — the deliberate 15% on `/price`, a shortage, a
-version conflict — is never retried, since that is a real answer. The
-worker is also re-handshaked when the tab becomes visible again, which is
-where it is most likely to have been terminated.
+So every `/api/` request after that is passed through to the network — the
+dev server answers an unknown path with `index.html`, a static host answers
+with a bare **404** — and only a reload brought it back. That is why this
+appeared on the deployed site and not on localhost.
+
+`src/server/activate.ts` posts `MOCK_ACTIVATE` itself, which is the whole
+repair: the worker puts the page back in the `Set` and replies
+`MOCKING_ENABLED`. It is sent when the tab becomes visible, when a new
+worker takes control, before any request made after ten quiet seconds, and
+again if a response still arrives from somewhere other than the mock server
+— in which case `src/api/client.ts` makes the request once more, which is
+what pressing Retry used to do by hand. Retrying is safe because the first
+attempt never reached the server, and every write carries an
+`Idempotency-Key` regardless. A failure the mock server composed itself —
+the deliberate 15% on `/price`, a shortage, a version conflict — is never
+retried, since that is a real answer. If no worker acknowledges at all,
+mocking is stopped and started properly, which re-registers it.
 
 ### Responsive shape
 
@@ -160,7 +173,7 @@ The reasoning behind every ◆ decision point and ✋ checkpoint is in
 | F — sales assistant | Done, TC-18 … TC-20 green (Gemini function calling, 7 tools, chat panel) |
 | G — bonus | Done, after A–F. A refresh keeps only still-valid reservations, a stale tab gets a conflict instead of overwriting, and an unfinished plate survives a refresh |
 
-`npm test` runs 343 passing tests, with nothing skipped or pending. Every
+`npm test` runs 356 passing tests, with nothing skipped or pending. Every
 acceptance test from Section 9 (TC-01 … TC-20) exists as a real test, and
 `tests/acceptance/coverage.test.ts` enforces that: it fails the suite if a
 TC id ever loses the test that covers it, or if a placeholder test is left
@@ -197,7 +210,7 @@ behind.
 - **`noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` are on.**
   They cost some verbosity at every `Record` lookup and buy real safety in
   code that is mostly `Record` lookups over stock and selections.
-- **The production bundle is large (~530 kB)** because MSW ships inside it.
+- **The production bundle is large (~617 kB, 197 kB gzipped)** because MSW ships inside it.
   That is deliberate: MSW *is* the backend for this task, so it has to be in
   the deployed build for a live demo to work at all.
 - **Unfinished:** see the Status table. Nothing in Part G has been started.
