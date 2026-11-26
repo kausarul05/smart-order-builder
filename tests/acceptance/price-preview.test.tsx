@@ -219,11 +219,15 @@ describe('TC-12 - the price preview on screen', () => {
     await user.click(plus('Chicken Sausage'));
 
     const retry = await waitFor(
-      () => screen.getByRole('button', { name: 'Retry' }),
+      () => screen.getByRole('button', { name: 'Try the price again' }),
       { timeout: 5000 },
     );
-    expect(screen.getByText('Pricing service hiccuped')).toBeInTheDocument();
-    expect(screen.getByText('Your configuration is untouched.')).toBeInTheDocument();
+    // The screen says what happened in the reader's own terms, and answers
+    // the question they actually have - the server's "Pricing service
+    // hiccuped" stays on the wire, where it is useful.
+    expect(screen.getByText('Could not get a price just now')).toBeInTheDocument();
+    expect(screen.getByText(/Nothing you picked has changed/)).toBeInTheDocument();
+    expect(screen.queryByText('Pricing service hiccuped')).not.toBeInTheDocument();
 
     // The draft survived the failure: the selection is still on screen and
     // the item can still be added.

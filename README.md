@@ -85,6 +85,13 @@ rules and every promotion parameter (P1, P2, C1, C2, VAT) live in
 component or engine mentions an option id, a group id or a limit value, so a
 different menu fixture works without a code change.
 
+That extends to how the controls behave. A group the fixture caps at one
+unit (Appendix A's Bread) is a choice of one, so tapping a second bread
+means "that one instead" and swaps the pick in a single tap, while a group
+that counts units (Eggs) keeps adding. The signal is the effective `max`,
+after any `overrideLimit` rule, never a group id — see
+`src/domain/rules/pick.ts`.
+
 ### The one place the brief is ambiguous
 
 Part C says the combo applies "if eggs >= 4 AND protein >= 2". That can
@@ -133,7 +140,7 @@ The reasoning behind every ◆ decision point and ✋ checkpoint is in
 | F — sales assistant | Done, TC-18 … TC-20 green (Gemini function calling, 7 tools, chat panel) |
 | G — bonus | Done, after A–F. A refresh keeps only still-valid reservations, a stale tab gets a conflict instead of overwriting, and an unfinished plate survives a refresh |
 
-`npm test` runs 321 passing tests, with nothing skipped or pending. Every
+`npm test` runs 337 passing tests, with nothing skipped or pending. Every
 acceptance test from Section 9 (TC-01 … TC-20) exists as a real test, and
 `tests/acceptance/coverage.test.ts` enforces that: it fails the suite if a
 TC id ever loses the test that covers it, or if a placeholder test is left

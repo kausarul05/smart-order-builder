@@ -59,6 +59,28 @@ export function addUsage(...parts: readonly Usage[]): Usage {
   return out;
 }
 
+/**
+ * `available` less what `usage` already speaks for, floored at zero.
+ *
+ * The brief shares stock across the cart AND the configuration being
+ * built, but a draft holds nothing on the server until Add to Cart. So the
+ * screen subtracts the draft itself before it tells anyone how many more
+ * units they can add; otherwise the grid offers eggs the plate has already
+ * claimed and the shortage only surfaces at Add to Cart.
+ *
+ * An unlimited ingredient stays `Infinity`.
+ */
+export function minusUsage(
+  available: Readonly<Record<IngredientId, number>>,
+  usage: Usage,
+): Readonly<Record<IngredientId, number>> {
+  const out: Record<IngredientId, number> = { ...available };
+  for (const [id, amount] of Object.entries(usage)) {
+    out[id] = Math.max(0, (out[id] ?? 0) - amount);
+  }
+  return out;
+}
+
 /** Drops zero and negative entries so a usage map stays canonical. */
 export function pruneUsage(usage: Usage): Usage {
   const out: Record<IngredientId, number> = {};

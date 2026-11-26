@@ -79,6 +79,19 @@ const addButton = () => screen.getByRole('button', { name: 'Add to Cart' });
 const plus = (optionName: string) =>
   screen.getByRole('button', { name: `Add one ${optionName}` });
 
+/**
+ * A tile only grows its minus button once something is picked, so the
+ * presence of that button IS "has units" - sturdier than matching a digit
+ * against the whole tile's text.
+ */
+const isPicked = (optionName: string): boolean => {
+  const tile = plus(optionName).closest('li');
+  return (
+    tile !== null &&
+    within(tile).queryByRole('button', { name: `Remove one ${optionName}` }) !== null
+  );
+};
+
 /** Builds configuration A: Toast, Scrambled x2, Chicken Sausage, Ketchup. */
 async function buildConfigA(user: ReturnType<typeof userEvent.setup>) {
   await user.click(plus('Toast'));
@@ -145,16 +158,51 @@ describe('the configurator screen', () => {
     const user = userEvent.setup();
     await renderApp();
 
-    // Bread is max 1: once Toast is picked, no bread can be added.
+    // Bread is max 1, so a second unit of the SAME bread is refused.
     await user.click(plus('Toast'));
     expect(plus('Toast')).toBeDisabled();
-    expect(plus('Paratha')).toBeDisabled();
-    expect(plus('Croissant')).toBeDisabled();
 
     // Eggs is max 6, so the sixth unit is the last one allowed.
     for (let click = 0; click < 6; click += 1) await user.click(plus('Fried'));
     expect(plus('Fried')).toBeDisabled();
     expect(plus('Omelette')).toBeDisabled();
+  });
+
+  it('swaps the pick in a single-choice group instead of blocking it', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+
+    await user.click(plus('Toast'));
+    expect(isPicked('Toast')).toBe(true);
+
+    // Bread is a choice of one, so the other breads stay reachable: a tap
+    // means "this instead", not "a second bread".
+    expect(plus('Paratha')).toBeEnabled();
+    expect(plus('Croissant')).toBeEnabled();
+
+    await user.click(plus('Paratha'));
+    expect(isPicked('Paratha')).toBe(true);
+    expect(isPicked('Toast')).toBe(false);
+
+    // And back again, in one tap.
+    await user.click(plus('Toast'));
+    expect(isPicked('Toast')).toBe(true);
+    expect(isPicked('Paratha')).toBe(false);
+  });
+
+  it('counts the plate being built against the stock it offers', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+
+    // Cheese stock is 4. Taking two leaves two, and the tile must say so
+    // rather than keep offering four.
+    await user.click(plus('Cheese'));
+    await user.click(plus('Cheese'));
+
+    const cheeseRow = plus('Cheese').closest('li');
+    await waitFor(() =>
+      expect(within(cheeseRow!).getByText('2 more can be added')).toBeInTheDocument(),
+    );
   });
 
   it('enforces the Croissant override: Extras max drops from 4 to 2', async () => {

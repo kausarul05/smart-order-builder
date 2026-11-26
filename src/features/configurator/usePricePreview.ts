@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { api } from '@/api/client';
+import { ApiError, api } from '@/api/client';
 import { LatestOnly } from '@/lib/latestOnly';
 import type { PriceBreakdown, Selection } from '@/domain/types';
 
@@ -24,6 +24,13 @@ export interface PricePreview {
   readonly breakdown: PriceBreakdown | null;
   readonly loading: boolean;
   readonly error: string | null;
+  /**
+   * The ApiError code behind `error`, so the panel can say what to do
+   * about it rather than repeat the server's own wording. The mock server
+   * says "Pricing service hiccuped"; a cook reading the screen needs to
+   * know their plate is safe and that Retry is the next move.
+   */
+  readonly errorCode: string | null;
   /** Re-requests the CURRENT configuration after a failure. */
   retry(): void;
 }
@@ -42,6 +49,7 @@ export function usePricePreview(input: PricePreviewInput): PricePreview {
   const [breakdown, setBreakdown] = useState<PriceBreakdown | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   const latest = useMemo(() => new LatestOnly(), []);
@@ -60,11 +68,13 @@ export function usePricePreview(input: PricePreviewInput): PricePreview {
       setBreakdown(null);
       setLoading(false);
       setError(null);
+      setErrorCode(null);
       return;
     }
 
     setLoading(true);
     setError(null);
+    setErrorCode(null);
 
     const timer = setTimeout(() => {
       requestId.current += 1;
@@ -84,6 +94,7 @@ export function usePricePreview(input: PricePreviewInput): PricePreview {
         .catch((cause: unknown) => {
           if (cause instanceof DOMException && cause.name === 'AbortError') return;
           setError(cause instanceof Error ? cause.message : 'Could not get a price');
+          setErrorCode(cause instanceof ApiError ? cause.code : null);
           setLoading(false);
         });
     }, PRICE_DEBOUNCE_MS);
@@ -97,7 +108,7 @@ export function usePricePreview(input: PricePreviewInput): PricePreview {
 
   const retry = useCallback(() => setAttempt((count) => count + 1), []);
 
-  return { breakdown, loading, error, retry };
+  return { breakdown, loading, error, errorCode, retry };
 }
 
 function sortedEntries(selection: Selection): readonly [string, number][] {

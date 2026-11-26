@@ -20,24 +20,38 @@ export function PriceBreakdownPanel(props: {
   const { preview, vatPercent } = props;
 
   if (preview.error !== null) {
+    const trouble = describeFailure(preview.errorCode);
     return (
       <div
-        className="mt-4 rounded-lg px-3 py-2 text-sm"
-        style={{ background: 'var(--surface-muted)' }}
+        className="mt-4 rounded-xl border px-3.5 py-3 text-sm"
+        style={{ background: 'var(--warn-soft)', borderColor: 'var(--warn)' }}
         role="alert"
       >
-        <p style={{ color: 'var(--danger)' }}>{preview.error}</p>
-        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-          Your configuration is untouched.
+        <p className="font-semibold" style={{ color: 'var(--warn)' }}>
+          {trouble.headline}
         </p>
-        <button
-          type="button"
-          onClick={preview.retry}
-          className="mt-2 rounded-md border px-3 py-1 text-xs font-medium"
-          style={{ borderColor: 'var(--border)' }}
-        >
-          Retry
-        </button>
+        <p className="mt-1" style={{ color: 'var(--text)' }}>
+          {trouble.body}
+        </p>
+        {trouble.retryable ? (
+          <button
+            type="button"
+            onClick={preview.retry}
+            className="mt-2.5 rounded-lg px-3 py-1.5 text-xs font-semibold"
+            style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}
+          >
+            Try the price again
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-2.5 rounded-lg px-3 py-1.5 text-xs font-semibold"
+            style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}
+          >
+            Reload the page
+          </button>
+        )}
       </div>
     );
   }
@@ -149,4 +163,42 @@ function Row(props: {
       </dd>
     </div>
   );
+}
+
+/**
+ * What to tell someone standing at the till when `/price` does not answer.
+ *
+ * The wire message is the server's own ("Pricing service hiccuped"), which
+ * is useful in devtools and useless on a screen: it names a component the
+ * reader does not have and leaves the real question — "did I lose my
+ * plate?" — unanswered. So the panel owns the wording, and the only thing
+ * it takes from the server is which of these three situations it is in.
+ */
+function describeFailure(code: string | null): {
+  readonly headline: string;
+  readonly body: string;
+  readonly retryable: boolean;
+} {
+  if (code === 'mock_server_missing') {
+    return {
+      headline: 'The menu service stopped answering',
+      body:
+        'Everything you picked is still here. Reloading the page reconnects it — nothing in your order is lost.',
+      retryable: false,
+    };
+  }
+  if (code === 'network') {
+    return {
+      headline: 'No connection, so no price yet',
+      body:
+        'Your plate is exactly as you left it. Once you are back online, ask for the price again.',
+      retryable: true,
+    };
+  }
+  return {
+    headline: 'Could not get a price just now',
+    body:
+      'The price service did not answer this time. Nothing you picked has changed — ask again and it usually comes straight back.',
+    retryable: true,
+  };
 }

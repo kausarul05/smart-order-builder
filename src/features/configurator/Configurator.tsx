@@ -4,9 +4,10 @@ import type { CartItemView } from '@/api/client';
 import { Icon } from '@/components/ui/Icon';
 import { useToast } from '@/components/ui/toastContext';
 import { formatBdt } from '@/domain/money';
+import { applyPick } from '@/domain/rules/pick';
 import { validate } from '@/domain/rules/validate';
-import { addUnits } from '@/domain/selection';
-import { stockHeadroom } from '@/domain/stock/availability';
+import { lineAllocation, stockHeadroom } from '@/domain/stock/availability';
+import { minusUsage } from '@/domain/stock/ingredients';
 import type { IngredientId, Menu, Selection, Violation } from '@/domain/types';
 import type { MutationError } from '@/features/orderBuilder/useOrderBuilder';
 import { ProductGrid, type GridDensity } from '@/features/pos/ProductGrid';
@@ -127,13 +128,27 @@ export function Configurator(props: ConfiguratorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection, qty]);
 
+  /*
+    Stock is shared with the configuration being built, not just with the
+    cart, so the draft's own claim comes off before the grid says how many
+    more units fit. A draft holds nothing on the server until Add to Cart,
+    so without this the grid would offer eggs this very plate has already
+    taken and the shortage would only appear at Add to Cart.
+  */
+  const freeForDraft = useMemo(
+    () => minusUsage(available, lineAllocation(selection, menu.groups, qty)),
+    [available, menu.groups, qty, selection],
+  );
+
   /** Stock headroom and group-limit headroom, combined, per option. */
   const headroom = useMemo(() => {
     const out: Record<string, number> = {};
     for (const group of menu.groups) {
       for (const option of group.options) {
-        const byStock = stockHeadroom(option, available, qty);
-        const next = addUnits(selection, option.id, 1);
+        const byStock = stockHeadroom(option, freeForDraft, qty);
+        // The same pick the tile will actually make, so a single-choice
+        // swap is never reported as a cap that blocks it.
+        const next = applyPick(selection, option.id, 1, menu.groups, menu.rules);
         const wouldCap =
           countCaps(
             validate({ productId: menu.productId, selection: next }, menu.groups, menu.rules),
@@ -142,7 +157,7 @@ export function Configurator(props: ConfiguratorProps) {
       }
     }
     return out;
-  }, [available, capCount, menu, qty, selection]);
+  }, [capCount, freeForDraft, menu, qty, selection]);
 
   // Persisted on every change, cleared once the plate is in the cart.
   useEffect(() => {
@@ -289,7 +304,9 @@ export function Configurator(props: ConfiguratorProps) {
           query={query}
           disabled={busy}
           onChange={(optionId, delta) =>
-            setSelection((current) => addUnits(current, optionId, delta))
+            setSelection((current) =>
+              applyPick(current, optionId, delta, menu.groups, menu.rules),
+            )
           }
         />
 
