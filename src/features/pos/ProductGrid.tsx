@@ -4,6 +4,7 @@ import { Icon } from '@/components/ui/Icon';
 import { formatPoisha } from '@/domain/money';
 import type { Menu, MenuGroup, MenuOption } from '@/domain/types';
 import { flyTo } from '@/lib/flyTo';
+import { stagger } from '@/lib/motion';
 
 export type GridDensity = 'grid' | 'list';
 
@@ -26,6 +27,15 @@ export function ProductGrid(props: {
   const { menu, selection, headroom, density, query, disabled } = props;
   const needle = query.trim().toLowerCase();
 
+  // A short staggered fade-up the first time the grid paints, and again
+  // whenever a search narrows it to a different set.
+  const gridRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = gridRef.current;
+    if (root === null) return;
+    stagger([...root.querySelectorAll<HTMLElement>('[data-tile]')]);
+  }, [needle, density]);
+
   const sections = menu.groups
     .map((group) => ({
       group,
@@ -47,7 +57,7 @@ export function ProductGrid(props: {
   }
 
   return (
-    <div className="space-y-7">
+    <div ref={gridRef} className="space-y-7">
       {sections.map(({ group, options }) => (
         <section key={group.id} id={`group-${group.id}`} aria-labelledby={`h-${group.id}`}>
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
@@ -154,27 +164,38 @@ function OptionCard(props: {
     </div>
   );
 
+  // The headroom pill earns its colour: red at zero, amber when it is
+  // nearly gone, quiet otherwise.
+  const tone = soldOut
+    ? { background: 'var(--danger-soft)', color: 'var(--danger)' }
+    : Number.isFinite(headroom) && headroom <= 2
+      ? { background: 'var(--warn-soft)', color: 'var(--warn)' }
+      : { background: 'var(--surface-muted)', color: 'var(--text-muted)' };
+
   const headroomLine = (
-    <p
-      className="tnum text-[11px]"
-      style={{ color: soldOut ? 'var(--danger)' : 'var(--text-muted)' }}
-    >
+    <span className="chip tnum" style={tone}>
       {Number.isFinite(headroom) ? `${headroom} more can be added` : 'unlimited'}
-    </p>
+    </span>
   );
 
   if (density === 'list') {
     return (
       <li
-        className="tile flex items-center gap-3 p-2.5"
+        data-tile
+        className="tile group flex items-center gap-3 p-2.5"
         data-selected={units > 0}
         data-disabled={soldOut && units === 0}
       >
-        <Thumb ref={thumbRef} option={option} className="size-14 rounded-lg" />
+        <Thumb
+          ref={thumbRef}
+          option={option}
+          className="size-14 rounded-xl"
+          soldOut={soldOut && units === 0}
+        />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{option.name}</p>
           <p className="tnum text-sm font-semibold">{priceLabel(option)}</p>
-          {headroomLine}
+          <div className="mt-0.5">{headroomLine}</div>
         </div>
         {stepper}
       </li>
@@ -183,16 +204,33 @@ function OptionCard(props: {
 
   return (
     <li
-      className="tile flex flex-col overflow-hidden"
+      data-tile
+      className="tile group relative flex flex-col overflow-hidden"
       data-selected={units > 0}
       data-disabled={soldOut && units === 0}
     >
-      <Thumb ref={thumbRef} option={option} className="aspect-[4/3] w-full rounded-none" />
+      <div className="relative">
+        <Thumb
+          ref={thumbRef}
+          option={option}
+          className="aspect-[4/3] w-full rounded-none"
+          soldOut={soldOut && units === 0}
+        />
+        {units > 0 && (
+          <span
+            className="tnum absolute left-2 top-2 grid min-w-6 place-items-center rounded-lg px-1.5 py-0.5 text-xs font-bold shadow"
+            style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}
+          >
+            {units}
+          </span>
+        )}
+      </div>
+
       <div className="flex flex-1 flex-col gap-1 p-3">
         <p className="line-clamp-2 text-sm font-medium leading-snug">{option.name}</p>
-        {headroomLine}
+        <div>{headroomLine}</div>
         <div className="mt-auto flex items-center justify-between gap-2 pt-1.5">
-          <p className="tnum text-[15px] font-bold">{priceLabel(option)}</p>
+          <p className="tnum text-base font-bold">{priceLabel(option)}</p>
           {stepper}
         </div>
       </div>
@@ -213,15 +251,16 @@ function Thumb(props: {
   readonly ref?: React.Ref<HTMLDivElement>;
   readonly option: MenuOption;
   readonly className: string;
+  readonly soldOut: boolean;
 }) {
-  const { option } = props;
+  const { option, soldOut } = props;
   const [failed, setFailed] = useState(false);
   const show = option.image !== undefined && !failed;
 
   return (
     <div
       ref={props.ref}
-      className={`thumb grid shrink-0 place-items-center overflow-hidden ${props.className}`}
+      className={`thumb relative grid shrink-0 place-items-center overflow-hidden ${props.className}`}
     >
       {show ? (
         <img
@@ -230,7 +269,7 @@ function Thumb(props: {
           loading="lazy"
           decoding="async"
           onError={() => setFailed(true)}
-          className="size-full object-cover"
+          className="size-full object-cover transition-transform duration-300 group-hover:scale-105 motion-reduce:transition-none motion-reduce:group-hover:scale-100"
         />
       ) : (
         <span
@@ -239,6 +278,15 @@ function Thumb(props: {
           style={{ color: 'var(--text-muted)' }}
         >
           {initials(option.name)}
+        </span>
+      )}
+
+      {soldOut && (
+        <span
+          className="absolute inset-0 grid place-items-center text-[11px] font-semibold uppercase tracking-wide backdrop-blur-[1px]"
+          style={{ background: 'var(--surface-raised)', color: 'var(--danger)' }}
+        >
+          Out of stock
         </span>
       )}
     </div>

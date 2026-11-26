@@ -37,7 +37,8 @@ import {
 export type CheckoutFailure =
   | { readonly code: 'empty_cart'; readonly message: string }
   | { readonly code: 'expired_items'; readonly message: string }
-  | { readonly code: 'invalid_payment'; readonly message: string };
+  | { readonly code: 'invalid_payment'; readonly message: string }
+  | { readonly code: 'conflict'; readonly message: string };
 
 export type CheckoutResult =
   | { readonly ok: true; readonly order: StoredOrder; readonly replayed: boolean }
@@ -47,6 +48,13 @@ export interface CheckoutInput {
   readonly paymentMethod: PaymentMethod;
   readonly couponCode?: string | null;
   readonly idempotencyKey: string;
+  /**
+   * Part G: the cart version this tab last saw. If another tab has
+   * changed the cart since, paying would charge for something the
+   * customer is no longer looking at - so it is refused and the tab
+   * reloads instead of silently overwriting.
+   */
+  readonly expectedCartVersion?: number;
 }
 
 /**
@@ -75,6 +83,18 @@ export function checkout(input: CheckoutInput): CheckoutResult {
     if (existing !== undefined) {
       return { ok: true, order: existing, replayed: true };
     }
+  }
+
+  if (
+    input.expectedCartVersion !== undefined &&
+    input.expectedCartVersion !== state.cartVersion
+  ) {
+    return {
+      ok: false,
+      code: 'conflict',
+      message:
+        'The cart changed in another tab. Reloading it now - check the order and pay again.',
+    };
   }
 
   if (!PAYMENT_METHODS.includes(input.paymentMethod)) {

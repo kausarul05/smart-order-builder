@@ -160,12 +160,16 @@ export const handlers = [
     const body = (await request.json()) as {
       paymentMethod: PaymentMethod;
       couponCode?: string | null;
+      expectedCartVersion?: number;
     };
     return checkoutResponse(
       checkout({
         paymentMethod: body.paymentMethod,
         couponCode: body.couponCode ?? null,
         idempotencyKey,
+        ...(body.expectedCartVersion === undefined
+          ? {}
+          : { expectedCartVersion: body.expectedCartVersion }),
       }),
     );
   }),

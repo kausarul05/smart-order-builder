@@ -10,18 +10,14 @@ import type { PricePreview } from './usePricePreview';
 export function PriceBreakdownPanel(props: {
   readonly preview: PricePreview;
   readonly qty: number;
+  /**
+   * Only ever rendered for a valid configuration - an invalid one shows
+   * the checklist instead, which says what is missing and where.
+   */
   readonly enabled: boolean;
   readonly vatPercent: number;
 }) {
-  const { preview, enabled, vatPercent } = props;
-
-  if (!enabled) {
-    return (
-      <p className="mt-4 text-sm" style={{ color: 'var(--text-muted)' }}>
-        Finish a valid configuration to see the price.
-      </p>
-    );
-  }
+  const { preview, vatPercent } = props;
 
   if (preview.error !== null) {
     return (

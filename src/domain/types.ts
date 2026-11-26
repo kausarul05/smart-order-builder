@@ -114,14 +114,19 @@ export interface Promotions {
     readonly groupId: GroupId;
     readonly every: number;
   };
-  /** P1: percentage off the step-2 amount when every threshold is met. */
+  /**
+   * P1: percentage off the step-2 amount when every threshold is met.
+   *
+   * A threshold counts EITHER option units in a group, or units of an
+   * ingredient. The brief writes "eggs >= 4 AND protein >= 2" without
+   * saying which, and no acceptance test distinguishes them - see
+   * `tests/acceptance/combo-measure.test.ts`. Making it a fixture choice
+   * means the reading is declared rather than buried in the engine.
+   */
   readonly combo: {
     readonly id: string;
     readonly percent: number;
-    readonly thresholds: readonly {
-      readonly groupId: GroupId;
-      readonly minUnits: number;
-    }[];
+    readonly thresholds: readonly ComboThreshold[];
   };
   /** C1: flat amount off when the cart subtotal reaches a threshold. */
   readonly cartThreshold: {
@@ -141,6 +146,10 @@ export interface Promotions {
   }[];
   readonly vatPercent: number;
 }
+
+export type ComboThreshold =
+  | { readonly groupId: GroupId; readonly minUnits: number }
+  | { readonly ingredientId: IngredientId; readonly minUnits: number };
 
 export interface Menu {
   readonly version: string;

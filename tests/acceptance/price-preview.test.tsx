@@ -248,9 +248,11 @@ describe('TC-12 - the price preview on screen', () => {
     await user.click(plus('Toast'));
     await user.click(plus('Scrambled'));
 
-    expect(
-      screen.getByText('Finish a valid configuration to see the price.'),
-    ).toBeInTheDocument();
+    // Instead of a price, the checklist says what is still missing and
+    // offers to jump to it.
+    expect(screen.getByText(/steps? left/)).toBeInTheDocument();
+    expect(screen.getByText(/Eggs total must be 2-6 in steps of 2/)).toBeInTheDocument();
+    expect(screen.getAllByText('Fix →').length).toBeGreaterThan(0);
 
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(seen).toHaveLength(0);

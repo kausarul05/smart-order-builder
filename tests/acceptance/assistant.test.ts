@@ -42,7 +42,7 @@ beforeEach(() => {
   resetState();
   setServerClock(manualClock(new Date('2026-11-25T09:00:00+06:00')));
   vi.stubEnv('VITE_GEMINI_API_KEY', 'AIzaTEST_KEY_FOR_TESTS_ONLY_0000000000');
-  vi.stubEnv('VITE_GEMINI_MODEL', 'gemini-2.0-flash');
+  vi.stubEnv('VITE_GEMINI_MODEL', 'gemini-3.5-flash-lite');
 });
 
 afterEach(() => {
@@ -231,6 +231,60 @@ describe('TC-20 - it refuses to invent a best customer', () => {
     expect(answer.grounded).toBe(false);
   });
 
+  it('echoes the call id back on the functionResponse', async () => {
+    initOrders(seed);
+    const bodies: unknown[] = [];
+    server.use(
+      http.post(GEMINI, async ({ request }) => {
+        const body = (await request.json()) as {
+          contents: { parts: Record<string, unknown>[] }[];
+        };
+        bodies.push(body);
+        const answered = body.contents
+          .flatMap((turn) => turn.parts)
+          .some((part) => 'functionResponse' in part);
+        return HttpResponse.json({
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: answered
+                  ? [{ text: 'six' }]
+                  : [{ functionCall: { name: 'count_orders', args: {}, id: 'call-42' } }],
+              },
+            },
+          ],
+        });
+      }),
+    );
+
+    await askAssistant('How many orders?', context());
+
+    // Without the id the model cannot match the result to its own call.
+    const second = bodies[1] as { contents: { parts: Record<string, unknown>[] }[] };
+    const response = second.contents
+      .flatMap((turn) => turn.parts)
+      .find((part) => 'functionResponse' in part) as {
+      functionResponse: { id?: string; name: string };
+    };
+    expect(response.functionResponse.id).toBe('call-42');
+    expect(response.functionResponse.name).toBe('count_orders');
+  });
+
+  it('omits the id when the model did not send one', async () => {
+    initOrders(seed);
+    const bodies = mockGemini({ name: 'count_orders' });
+    await askAssistant('How many orders?', context());
+
+    const second = bodies[1] as { contents: { parts: Record<string, unknown>[] }[] };
+    const response = second.contents
+      .flatMap((turn) => turn.parts)
+      .find((part) => 'functionResponse' in part) as {
+      functionResponse: Record<string, unknown>;
+    };
+    expect('id' in response.functionResponse).toBe(false);
+  });
+
   it('never puts the orders in the prompt', async () => {
     initOrders(seed);
     const bodies = mockGemini({ name: 'count_orders' });
@@ -298,6 +352,22 @@ describe('assistant error handling', () => {
     server.use(http.post(GEMINI, () => HttpResponse.error()));
     await expect(askAssistant('How many orders?', context())).rejects.toThrow(
       /Could not reach Gemini/,
+    );
+  });
+
+  it('names a retired model id on a 404', async () => {
+    // gemini-2.0-flash was shut down on 1 June 2026; the id that ships
+    // today will be retired too, and this is the message that says so.
+    server.use(
+      http.post(GEMINI, () =>
+        HttpResponse.json(
+          { error: { message: 'models/gemini-2.0-flash is not found' } },
+          { status: 404 },
+        ),
+      ),
+    );
+    await expect(askAssistant('How many orders?', context())).rejects.toThrow(
+      /model is not available for this key/,
     );
   });
 

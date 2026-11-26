@@ -33,6 +33,7 @@ import { SERVER_TIME_ZONE, serverNow } from './clock';
 import {
   allocationFor,
   getState,
+  persistState,
   reservationExpiryFrom,
   snapshot,
   sweepExpired,
@@ -81,7 +82,11 @@ export function transact<T>(body: () => T): T {
     cartVersion: state.cartVersion,
   };
   try {
-    return body();
+    const result = body();
+    // Whatever was committed is now the server's state, so it is written
+    // out here rather than at every call site (Part G).
+    persistState();
+    return result;
   } catch (cause) {
     state.reservations = backup.reservations;
     state.cart = backup.cart;

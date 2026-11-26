@@ -12,6 +12,7 @@ import type { MutationError } from '@/features/orderBuilder/useOrderBuilder';
 import { ProductGrid, type GridDensity } from '@/features/pos/ProductGrid';
 import { flyTo, registerFlyTarget } from '@/lib/flyTo';
 import { PriceBreakdownPanel } from './PriceBreakdownPanel';
+import { ValidationPanel } from './ValidationPanel';
 import { usePricePreview } from './usePricePreview';
 
 export interface ConfiguratorProps {
@@ -25,6 +26,8 @@ export interface ConfiguratorProps {
   onAdd(selection: Selection, qty: number): Promise<boolean>;
   onSave(selection: Selection, qty: number): Promise<boolean>;
   onCancelEdit(): void;
+  onJumpToGroup(groupId: string): void;
+  clearMutationError(): void;
   onSelectionChange?(
     selection: Selection,
     violationGroupIds: ReadonlySet<string>,
@@ -39,8 +42,14 @@ export function Configurator(props: ConfiguratorProps) {
   const { menu, available, editingItem, busy, mutationError } = props;
   const toast = useToast();
 
-  const [selection, setSelection] = useState<Selection>({});
-  const [qty, setQty] = useState(menu.itemQty.min);
+  /*
+    Part G: an unfinished plate survives a refresh. sessionStorage, not
+    localStorage - a draft belongs to this tab and this sitting, and
+    restoring someone else's half-built plate in a new window would be
+    surprising rather than helpful.
+  */
+  const [selection, setSelection] = useState<Selection>(() => readDraft(menu).selection);
+  const [qty, setQty] = useState(() => readDraft(menu).qty);
   const [query, setQuery] = useState('');
   const [density, setDensity] = useState<GridDensity>('grid');
 
@@ -71,6 +80,23 @@ export function Configurator(props: ConfiguratorProps) {
 
   const capCount = useMemo(() => countCaps(violations), [violations]);
 
+  /** Groups that currently satisfy their own limits, for the progress bar. */
+  const satisfiedGroups = useMemo(
+    () =>
+      menu.groups.filter((group) => {
+        const units = group.options.reduce(
+          (total, option) => total + (selection[option.id] ?? 0),
+          0,
+        );
+        const { min, max, step } = group.limits;
+        if (units < (min ?? 0)) return false;
+        if (max !== undefined && units > max) return false;
+        if (step !== undefined && step > 0 && units % step !== 0) return false;
+        return true;
+      }).length,
+    [menu, selection],
+  );
+
   const violationGroupIds = useMemo(() => {
     const ids = new Set<string>();
     for (const violation of violations) {
@@ -83,6 +109,23 @@ export function Configurator(props: ConfiguratorProps) {
   useEffect(() => {
     onSelectionChange?.(selection, violationGroupIds, violations.length);
   }, [onSelectionChange, selection, violationGroupIds, violations.length]);
+
+  /*
+    A shortage is about the plate that was sent, so editing the plate
+    retires it. Without this, "Short: 2 egg" sits under a configuration
+    that no longer asks for those eggs. The first render is skipped so an
+    error raised by the add itself is not wiped before it is read.
+  */
+  const settled = useRef(false);
+  useEffect(() => {
+    if (!settled.current) {
+      settled.current = true;
+      return;
+    }
+    props.clearMutationError();
+    // Only a change to the draft should retire it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, qty]);
 
   /** Stock headroom and group-limit headroom, combined, per option. */
   const headroom = useMemo(() => {
@@ -101,9 +144,16 @@ export function Configurator(props: ConfiguratorProps) {
     return out;
   }, [available, capCount, menu, qty, selection]);
 
+  // Persisted on every change, cleared once the plate is in the cart.
+  useEffect(() => {
+    writeDraft({ selection, qty });
+  }, [selection, qty]);
+
   const reset = (): void => {
     setSelection({});
     setQty(menu.itemQty.min);
+    // The failure described the draft that just went away, so it goes too.
+    props.clearMutationError();
   };
 
   const submit = async (): Promise<void> => {
@@ -243,39 +293,26 @@ export function Configurator(props: ConfiguratorProps) {
           }
         />
 
-        {/* Every violation, never just the first. */}
-        {violations.length > 0 && (
-          <ul className="mt-6 space-y-1.5" aria-live="polite">
-            {violations.map((violation, index) => (
-              <li
-                key={`${scopeId(violation)}-${violation.code}-${index}`}
-                className="flex items-start gap-2 rounded-lg px-3 py-2 text-sm"
-                style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}
-              >
-                <span aria-hidden className="font-bold">
-                  !
-                </span>
-                <span className="flex-1">
-                  {violation.message}
-                  <span className="ml-1.5 text-xs opacity-70">
-                    [{scopeId(violation)}
-                    {violation.viaOverride === undefined
-                      ? ''
-                      : ` via ${violation.viaOverride}`}
-                    ]
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
+        {/*
+          Either what is still wrong, or the price. Every violation is
+          still listed - the checklist only sorts them into "not finished"
+          and "does not work", and makes each one jump to its group.
+        */}
+        {isValid ? (
+          <PriceBreakdownPanel
+            preview={preview}
+            qty={qty}
+            enabled
+            vatPercent={menu.promotions.vatPercent}
+          />
+        ) : (
+          <ValidationPanel
+            menu={menu}
+            violations={violations}
+            satisfiedGroups={satisfiedGroups}
+            onJump={props.onJumpToGroup}
+          />
         )}
-
-        <PriceBreakdownPanel
-          preview={preview}
-          qty={qty}
-          enabled={isValid}
-          vatPercent={menu.promotions.vatPercent}
-        />
 
         {/* Kept inline as well as in a toast: a shortage is worth re-reading. */}
         {mutationError !== null && (
@@ -361,13 +398,49 @@ function leadImage(menu: Menu, selection: Selection): string | undefined {
   return undefined;
 }
 
+const DRAFT_KEY = 'sob.draft.v1';
+
+interface Draft {
+  readonly selection: Selection;
+  readonly qty: number;
+}
+
+function readDraft(menu: Menu): Draft {
+  const empty: Draft = { selection: {}, qty: menu.itemQty.min };
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    if (raw === null) return empty;
+    const parsed = JSON.parse(raw) as Partial<Draft>;
+    const qty =
+      typeof parsed.qty === 'number' && parsed.qty >= menu.itemQty.min && parsed.qty <= menu.itemQty.max
+        ? parsed.qty
+        : menu.itemQty.min;
+    // Only options this menu still has: a fixture swap must not revive
+    // ids that no longer exist.
+    const known = new Set(menu.groups.flatMap((group) => group.options.map((o) => o.id)));
+    const selection: Record<string, number> = {};
+    for (const [id, units] of Object.entries(parsed.selection ?? {})) {
+      if (known.has(id) && typeof units === 'number' && units > 0) selection[id] = units;
+    }
+    return { selection, qty };
+  } catch {
+    return empty;
+  }
+}
+
+function writeDraft(draft: Draft): void {
+  try {
+    if (Object.keys(draft.selection).length === 0) sessionStorage.removeItem(DRAFT_KEY);
+    else sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    // Private mode simply loses the draft on refresh.
+  }
+}
+
 function countCaps(violations: readonly Violation[]): number {
   return violations.filter((violation) => CAP_CODES.has(violation.code)).length;
 }
 
-function scopeId(violation: Violation): string {
-  return violation.scope.kind === 'group' ? violation.scope.groupId : violation.scope.ruleId;
-}
 
 function quantities(menu: Menu): readonly number[] {
   const out: number[] = [];

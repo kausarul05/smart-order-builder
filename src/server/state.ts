@@ -25,7 +25,14 @@ import { DEFAULT_MENU, DEFAULT_STOCK } from '@/fixtures/menu.default';
 import { RESERVATION_TTL_MS, SERVER_TIME_ZONE, serverNow } from './clock';
 
 export const ORDERS_STORAGE_KEY = 'sob.orders.v1';
-export const CART_STORAGE_KEY = 'sob.cart.v1';
+/**
+ * Part G. The mock server IS the source of truth, so what survives a
+ * refresh is the server's own state - stock, reservations, cart - not a
+ * copy the client kept. Writing it to localStorage also makes it shared
+ * between tabs, which is what lets D1 and the stale-tab conflict be
+ * demonstrated rather than only described.
+ */
+export const SERVER_STORAGE_KEY = 'sob.server.v1';
 
 export interface Reservation {
   readonly id: string;
@@ -93,7 +100,10 @@ export function sweepExpired(now: Date = serverNow()): readonly string[] {
       state.cart.set(item.id, { ...item, status: 'expired' });
     }
   }
-  if (expired.length > 0) state.cartVersion += 1;
+  if (expired.length > 0) {
+    state.cartVersion += 1;
+    persistState();
+  }
   return expired;
 }
 
@@ -194,6 +204,86 @@ export function priceSeedOrders(seed: SeedOrdersFile, menu: Menu): StoredOrder[]
       menuVersion: menu.version,
     };
   });
+}
+
+/* ------------------------------------------------- server persistence */
+
+interface PersistedState {
+  readonly v: 1;
+  readonly menuVersion: string;
+  readonly onHand: Record<IngredientId, number>;
+  readonly sold: Record<IngredientId, number>;
+  readonly reservations: readonly Reservation[];
+  readonly cart: readonly CartItem[];
+  readonly cartVersion: number;
+  readonly idempotency: readonly (readonly [string, string])[];
+}
+
+/** Called after every successful mutation. Never throws. */
+export function persistState(): void {
+  try {
+    const payload: PersistedState = {
+      v: 1,
+      menuVersion: state.menu.version,
+      onHand: state.onHand,
+      sold: state.sold,
+      reservations: [...state.reservations.values()],
+      cart: [...state.cart.values()],
+      cartVersion: state.cartVersion,
+      idempotency: [...state.idempotency.entries()],
+    };
+    localStorage.setItem(SERVER_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Private mode loses persistence; the session still works.
+  }
+}
+
+/**
+ * Restores the server's state, dropping every reservation whose five
+ * minutes elapsed while the page was away. The stock those held returns
+ * to the shelf, and their cart items come back read-only - exactly what
+ * the expiry sweep would have done had the tab stayed open.
+ *
+ * Returns true when something was restored.
+ */
+export function restoreState(now: Date = serverNow()): boolean {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(SERVER_STORAGE_KEY);
+  } catch {
+    return false;
+  }
+  if (raw === null) return false;
+
+  let parsed: PersistedState;
+  try {
+    parsed = JSON.parse(raw) as PersistedState;
+  } catch {
+    return false;
+  }
+  if (parsed.v !== 1) return false;
+  // A store written against a different menu cannot be trusted.
+  if (parsed.menuVersion !== state.menu.version) return false;
+
+  state.onHand = { ...parsed.onHand };
+  state.sold = { ...parsed.sold };
+  state.cartVersion = parsed.cartVersion;
+  state.idempotency = new Map(parsed.idempotency);
+
+  const live = parsed.reservations.filter(
+    (reservation) => reservation.expiresAt > now.getTime(),
+  );
+  state.reservations = new Map(live.map((reservation) => [reservation.id, reservation]));
+
+  const held = new Set(live.map((reservation) => reservation.cartItemId));
+  state.cart = new Map(
+    parsed.cart.map((item) => [
+      item.id,
+      held.has(item.id) ? item : { ...item, status: 'expired' as const },
+    ]),
+  );
+
+  return true;
 }
 
 /** Ingredients a cart line holds, used when reserving and when swapping. */

@@ -5,6 +5,7 @@ import { useToast } from './components/ui/toastContext';
 import { formatBdt } from './domain/money';
 import { priceCart } from './domain/pricing/priceCart';
 import type { PaymentMethod, Selection, StoredOrder } from './domain/types';
+import { AssistantLauncher } from './features/assistant/AssistantLauncher';
 import { Configurator } from './features/configurator/Configurator';
 import { downloadOrders } from './features/checkout/downloadOrders';
 import {
@@ -303,6 +304,8 @@ export default function App() {
             onAdd={builder.addToCart}
             onSave={builder.saveEdit}
             onCancelEdit={builder.cancelEdit}
+            onJumpToGroup={jumpToGroup}
+            clearMutationError={builder.clearMutationError}
             onSelectionChange={onSelectionChange}
           />
         </div>
@@ -328,6 +331,10 @@ export default function App() {
       >
         {orderPanel}
       </div>
+
+      {/* The assistant is a floating launcher, not a tab: a chat nobody
+          can find is a chat nobody uses. */}
+      <AssistantLauncher menu={menu} orders={builder.orders} />
 
       {/* -------------------------------------------- order sheet (phone) */}
       {orderOpen && (

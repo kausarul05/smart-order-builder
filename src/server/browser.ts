@@ -2,6 +2,10 @@
 
 import { setupWorker } from 'msw/browser';
 import { handlers } from './handlers';
+import { SERVER_STORAGE_KEY, restoreState } from './state';
+
+/** Fired when another tab changed the shared server state (Part G). */
+export const SERVER_CHANGED = 'sob:server-changed';
 
 export const worker = setupWorker(...handlers);
 
@@ -20,5 +24,18 @@ export async function startMockServer(): Promise<void> {
       options: { scope: '/' },
     },
     quiet: true,
+  });
+
+  // Part G: the server's own state survives a refresh, minus any
+  // reservation whose five minutes ran out while the tab was away.
+  restoreState();
+
+  // ...and because that state lives in localStorage, a second tab writing
+  // to it is a real event here. The app refetches rather than carrying on
+  // with a view that is already stale.
+  window.addEventListener('storage', (event) => {
+    if (event.key !== SERVER_STORAGE_KEY) return;
+    restoreState();
+    window.dispatchEvent(new CustomEvent(SERVER_CHANGED));
   });
 }

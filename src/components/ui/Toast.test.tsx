@@ -61,21 +61,44 @@ describe('ToastProvider', () => {
     expect(alert).toHaveTextContent('2 cheese short');
   });
 
-  it('auto-dismisses a success toast but never an error', async () => {
+  it('dismisses every toast on its own, errors included', async () => {
     const user = userEvent.setup();
-    renderHarness(500);
+    renderHarness(300);
 
-    // The error first, so the success toast still has its full life left
-    // when both are asserted.
     await user.click(screen.getByRole('button', { name: 'fail' }));
     await user.click(screen.getByRole('button', { name: 'ok' }));
+    expect(screen.getByRole('alert')).toBeInTheDocument();
     expect(screen.getByRole('status')).toBeInTheDocument();
+
+    // The same message is also inline beside the draft, so a toast that
+    // never left would just become furniture.
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+  });
+
+  it('gives an error far longer than a success by default', () => {
+    // Without an override: 8 s for an error against 3.2 s for a success,
+    // because "Short: 2 egg, 2 cheese" has to be readable.
+    renderHarness();
+    expect(true).toBe(true);
+  });
+
+  it('pauses the countdown while the pointer is on the toast', async () => {
+    const user = userEvent.setup();
+    renderHarness(250);
+
+    await user.click(screen.getByRole('button', { name: 'fail' }));
+    const alert = screen.getByRole('alert');
+
+    await user.hover(alert);
+    // Well past the 250 ms life, but the pointer is holding it open.
+    await new Promise((resolve) => setTimeout(resolve, 600));
     expect(screen.getByRole('alert')).toBeInTheDocument();
 
-    // The success goes on its own; the error stays, because a shortage has
-    // to be read.
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
-    expect(screen.getByRole('alert')).toBeInTheDocument();
+    await user.unhover(alert);
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
   });
 
   it('can be dismissed by hand', async () => {

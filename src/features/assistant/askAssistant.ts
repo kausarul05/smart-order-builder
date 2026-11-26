@@ -42,7 +42,16 @@ export interface AssistantAnswer {
 
 interface GeminiPart {
   readonly text?: string;
-  readonly functionCall?: { readonly name: string; readonly args?: Record<string, unknown> };
+  readonly functionCall?: {
+    readonly name: string;
+    readonly args?: Record<string, unknown>;
+    /**
+     * Newer API versions tag each call. When one is present it MUST come
+     * back on the functionResponse, or the model cannot match the result
+     * to the call it made.
+     */
+    readonly id?: string;
+  };
 }
 
 interface GeminiResponse {
@@ -151,6 +160,8 @@ export async function askAssistant(
         {
           functionResponse: {
             name: tool.name,
+            // Echo the call id back when the model supplied one.
+            ...(functionCall.id === undefined ? {} : { id: functionCall.id }),
             response: { result: toolResult },
           },
         },

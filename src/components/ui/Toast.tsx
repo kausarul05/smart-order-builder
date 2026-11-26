@@ -18,11 +18,19 @@ import {
  */
 
 
+/**
+ * Every toast goes on its own. An error gets much longer than the rest -
+ * "Short: 2 egg, 2 cheese" has to be readable - but it does not sit there
+ * forever, because the same message is also inline next to the draft,
+ * where it belongs. A toast that never leaves just becomes furniture.
+ *
+ * The countdown pauses while the pointer or the keyboard is on the toast,
+ * so reading it cannot time out underneath you.
+ */
 const AUTO_DISMISS_MS: Record<ToastKind, number | null> = {
   success: 3200,
   info: 3200,
-  // An error stays until it is dismissed.
-  error: null,
+  error: 8000,
 };
 
 export function ToastProvider(props: {
@@ -37,6 +45,8 @@ export function ToastProvider(props: {
   const [toasts, setToasts] = useState<readonly Toast[]>([]);
   const nextId = useRef(0);
   const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  /** How long each toast still has, so a pause can resume accurately. */
+  const remaining = useRef(new Map<number, { left: number; startedAt: number }>());
 
   const dismiss = useCallback((id: number): void => {
     const timer = timers.current.get(id);
@@ -44,29 +54,59 @@ export function ToastProvider(props: {
       clearTimeout(timer);
       timers.current.delete(id);
     }
+    remaining.current.delete(id);
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
+
+  const arm = useCallback(
+    (id: number, ms: number): void => {
+      remaining.current.set(id, { left: ms, startedAt: Date.now() });
+      timers.current.set(
+        id,
+        setTimeout(() => dismiss(id), ms),
+      );
+    },
+    [dismiss],
+  );
+
+  /** Pointer or focus on a toast freezes its countdown. */
+  const hold = useCallback((id: number): void => {
+    const timer = timers.current.get(id);
+    const state = remaining.current.get(id);
+    if (timer === undefined || state === undefined) return;
+    clearTimeout(timer);
+    timers.current.delete(id);
+    remaining.current.set(id, {
+      left: Math.max(600, state.left - (Date.now() - state.startedAt)),
+      startedAt: Date.now(),
+    });
+  }, []);
+
+  const release = useCallback(
+    (id: number): void => {
+      const state = remaining.current.get(id);
+      if (state === undefined || timers.current.has(id)) return;
+      arm(id, state.left);
+    },
+    [arm],
+  );
 
   const push = useCallback(
     (toast: Omit<Toast, 'id'>): void => {
       const id = nextId.current++;
       setToasts((current) => [...current.slice(-3), { ...toast, id }]);
-      const ms =
-        AUTO_DISMISS_MS[toast.kind] === null ? null : (props.autoDismissMs ?? AUTO_DISMISS_MS[toast.kind]);
-      if (ms !== null) {
-        timers.current.set(
-          id,
-          setTimeout(() => dismiss(id), ms),
-        );
-      }
+      const base = AUTO_DISMISS_MS[toast.kind];
+      const ms = base === null ? null : (props.autoDismissMs ?? base);
+      if (ms !== null) arm(id, ms);
     },
-    [dismiss, props.autoDismissMs],
+    [arm, props.autoDismissMs],
   );
 
   useEffect(
     () => () => {
       for (const timer of timers.current.values()) clearTimeout(timer);
       timers.current.clear();
+      remaining.current.clear();
     },
     [],
   );
@@ -89,10 +129,12 @@ export function ToastProvider(props: {
     [dismiss, push],
   );
 
+  const viewport = { toasts, onDismiss: dismiss, onHold: hold, onRelease: release };
+
   return (
     <ToastContext.Provider value={api}>
       {props.children}
-      <ToastViewport toasts={toasts} onDismiss={dismiss} />
+      <ToastViewport {...viewport} />
     </ToastContext.Provider>
   );
 }
@@ -112,12 +154,16 @@ const GLYPH: Record<ToastKind, string> = {
 function ToastViewport(props: {
   readonly toasts: readonly Toast[];
   onDismiss(id: number): void;
+  onHold(id: number): void;
+  onRelease(id: number): void;
 }) {
   return (
     <div
       // Full width above the sticky bar on a phone, a stack in the corner
       // from tablet up.
-      className="pointer-events-none fixed inset-x-3 bottom-[5.5rem] z-50 flex flex-col gap-2 sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-96"
+      // Stacked clear of the sticky order bar on a phone and of the
+      // assistant launcher on every size.
+      className="pointer-events-none fixed inset-x-3 bottom-[9.5rem] z-50 flex flex-col gap-2 sm:inset-x-auto sm:bottom-40 sm:right-4 sm:w-96 lg:bottom-24"
       aria-live="polite"
       aria-relevant="additions"
     >
@@ -125,6 +171,10 @@ function ToastViewport(props: {
         <div
           key={toast.id}
           role={toast.kind === 'error' ? 'alert' : 'status'}
+          onMouseEnter={() => props.onHold(toast.id)}
+          onMouseLeave={() => props.onRelease(toast.id)}
+          onFocusCapture={() => props.onHold(toast.id)}
+          onBlurCapture={() => props.onRelease(toast.id)}
           className="toast-in pointer-events-auto flex items-start gap-3 rounded-xl border p-3 shadow-lg backdrop-blur"
           style={{
             borderColor: 'var(--border)',

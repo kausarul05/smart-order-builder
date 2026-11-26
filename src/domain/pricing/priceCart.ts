@@ -18,6 +18,7 @@
 
 import { formatBdt, percentOf, roundHalfUpToWholeBdt } from '../money';
 import { groupUnits, indexOptions } from '../selection';
+import { usageOfSelection } from '../stock/ingredients';
 import { isStrictlyBefore } from '../time';
 import type {
   DiscountCandidate,
@@ -111,9 +112,18 @@ export function extrasDealDiscount(selection: Selection, menu: Menu): Poisha {
   return off;
 }
 
-/** P1 - does the selection meet every combo threshold? */
+/**
+ * P1 - does the selection meet every combo threshold?
+ *
+ * A threshold counts option units in a group, or units of an ingredient,
+ * whichever the fixture declared. See the note on `Promotions.combo`.
+ */
 export function comboQualifies(selection: Selection, menu: Menu): boolean {
   return menu.promotions.combo.thresholds.every((threshold) => {
+    if ('ingredientId' in threshold) {
+      const used = usageOfSelection(selection, menu.groups)[threshold.ingredientId] ?? 0;
+      return used >= threshold.minUnits;
+    }
     const group = findGroup(menu, threshold.groupId);
     if (!group) return false;
     return groupUnits(selection, group) >= threshold.minUnits;

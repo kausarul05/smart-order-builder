@@ -42,7 +42,8 @@ src/
     stock/           Part B  usage, availability, net-difference edits
     pricing/         Part C  priceCart / priceUnit
     stats/           Part F  the numbers behind the chatbot
-  fixtures/        Appendix A as data — imported ONLY by src/server
+  fixtures/        Appendix A as data, plus an unrelated second menu
+                   — imported ONLY by src/server
   server/          the mock backend: state, clock, MSW handlers
   api/             the single typed client; owns the server-time offset
   lib/             LatestOnly (stale-response guard), debounce
@@ -53,7 +54,7 @@ src/
     configurator/    the draft: headroom, violations, price preview
     checkout/        orders.json export
     orderBuilder/    the one hook holding menu + stock + cart + orders
-    assistant/       Gemini function calling, tool table, chat panel
+    assistant/       Gemini function calling, tool table, floating chat
 tests/
   fixtures/        configurations A, B, C from Section 9
   acceptance/      TC-01 .. TC-20, named after the brief
@@ -84,6 +85,24 @@ rules and every promotion parameter (P1, P2, C1, C2, VAT) live in
 component or engine mentions an option id, a group id or a limit value, so a
 different menu fixture works without a code change.
 
+### The one place the brief is ambiguous
+
+Part C says the combo applies "if eggs >= 4 AND protein >= 2". That can
+mean four option **units** in the Eggs group or four egg **ingredients** —
+Omelette is one unit but two eggs. Protein is 1:1, so only eggs can
+differ, and **no acceptance test distinguishes the two readings**:
+`tests/acceptance/combo-measure.test.ts` proves it by pricing every pinned
+configuration both ways and getting the same number.
+
+The shipped fixture counts option units, for consistency with every other
+count in the engine. A threshold can instead name an ingredient, so the
+other reading is one line in the fixture and no code change:
+
+```ts
+{ groupId: 'eggs', minUnits: 4 }      // shipped
+{ ingredientId: 'egg', minUnits: 4 }  // the other reading
+```
+
 ### Three decisions worth knowing before reading the code
 
 1. **Group limits count option units, not ingredient units.** TC-01 and
@@ -112,9 +131,9 @@ The reasoning behind every ◆ decision point and ✋ checkpoint is in
 | D — cart and reservations | Done, TC-13 … TC-15 green (atomic reserve, idempotency, net-difference swap, server-clock expiry) |
 | E — checkout and orders JSON | Done, TC-16 … TC-17 green (atomic checkout, idempotent Pay, persisted store, `Download orders.json`) |
 | F — sales assistant | Done, TC-18 … TC-20 green (Gemini function calling, 7 tools, chat panel) |
-| G — bonus | Not started. Groundwork is in place (cart versioning returns a conflict, reservations are swept against the server clock) but the brief says not to start it before A–F are correct |
+| G — bonus | Done, after A–F. A refresh keeps only still-valid reservations, a stale tab gets a conflict instead of overwriting, and an unfinished plate survives a refresh |
 
-`npm test` runs 213 passing tests. Every acceptance test from Section 9
+`npm test` runs 299 passing tests. Every acceptance test from Section 9
 (TC-01 … TC-20) exists as a real test — `tests/acceptance/pending.test.ts`
 maps each one to its file and holds the three Part G items that are
 deliberately not started.
@@ -154,6 +173,27 @@ deliberately not started.
   That is deliberate: MSW *is* the backend for this task, so it has to be in
   the deployed build for a live demo to work at all.
 - **Unfinished:** see the Status table. Nothing in Part G has been started.
+- **The mock server's own state is what persists, not a client copy.** Part
+  G writes stock, reservations, the cart and the idempotency keys to
+  localStorage after every committed mutation. A reload restores them and
+  drops any reservation whose five minutes elapsed while the tab was away,
+  which is exactly what the sweep would have done. Seed orders are
+  deliberately kept out of sold stock: they are history, and subtracting
+  them would empty today's shelves on first load.
+- **That store is also how two tabs share one server.** MSW runs a worker
+  per tab, so without it each tab would have its own memory. With it, a
+  write in one tab raises a `storage` event in the other, which refetches;
+  and a tab that pays against a cart version someone else has moved past
+  gets a conflict rather than charging for an order the customer cannot
+  see.
+- **The unfinished plate is in sessionStorage, not localStorage.** A draft
+  belongs to one tab and one sitting; restoring someone else's half-built
+  order in a new window would be surprising rather than helpful.
+- **The Gemini model id will rot.** `gemini-2.0-flash` was shut down on
+  1 June 2026. The default is a current Flash-Lite, chosen over the newest
+  Flash because its free daily allowance is far larger and each question
+  costs two calls. A retired id comes back as a 404 and the panel says so by
+  name; `VITE_GEMINI_MODEL` overrides it without a code change.
 
 ## Hours spent
 

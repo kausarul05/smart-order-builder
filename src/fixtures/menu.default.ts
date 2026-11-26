@@ -153,6 +153,13 @@ export const DEFAULT_MENU: Menu = {
     combo: {
       id: 'P1',
       percent: 10,
+      /*
+        "eggs >= 4" counts option UNITS in the Eggs group, for consistency
+        with every other count in the engine. The brief does not say which
+        it means and no acceptance test distinguishes it - the alternative
+        is one line, { ingredientId: 'egg', minUnits: 4 }, and
+        tests/acceptance/combo-measure.test.ts pins both readings.
+      */
       thresholds: [
         { groupId: 'eggs', minUnits: 4 },
         { groupId: 'protein', minUnits: 2 },

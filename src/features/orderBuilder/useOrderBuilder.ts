@@ -67,6 +67,7 @@ export function useOrderBuilder(): OrderBuilder {
   const [busy, setBusy] = useState(false);
   const [mutationError, setMutationError] = useState<MutationError | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
+  const [cartVersion, setCartVersion] = useState(0);
 
   /**
    * One key per user INTENT. It is reused while an add keeps failing, so a
@@ -85,6 +86,7 @@ export function useOrderBuilder(): OrderBuilder {
       ]);
       setAvailable(stock);
       setItems(cart.items);
+      setCartVersion(cart.cartVersion);
       setOrders(stored);
       setLoadError(null);
       setLoadErrorCode(null);
@@ -120,6 +122,16 @@ export function useOrderBuilder(): OrderBuilder {
   useEffect(() => {
     const timer = setInterval(() => void refresh(), 5000);
     return () => clearInterval(timer);
+  }, [refresh]);
+
+  /**
+   * Part G: another tab wrote to the shared server state, so this view is
+   * already stale. Refetch rather than carry on.
+   */
+  useEffect(() => {
+    const onChanged = (): void => void refresh();
+    window.addEventListener('sob:server-changed', onChanged);
+    return () => window.removeEventListener('sob:server-changed', onChanged);
   }, [refresh]);
 
   /**
@@ -213,14 +225,21 @@ export function useOrderBuilder(): OrderBuilder {
       couponCode: string | null,
     ): Promise<StoredOrder | null> => {
       const result = await run(() =>
-        api.checkout({ paymentMethod, couponCode }, payKey),
+        api.checkout(
+          { paymentMethod, couponCode, expectedCartVersion: cartVersion },
+          payKey,
+        ),
       );
-      if (result === null) return null;
+      if (result === null) {
+        // A conflict means another tab moved the cart; show it as it is now.
+        await refresh();
+        return null;
+      }
       setPayKey(newIdempotencyKey());
       await refresh();
       return result.order;
     },
-    [payKey, refresh, run],
+    [cartVersion, payKey, refresh, run],
   );
 
   const beginEdit = useCallback((item: CartItemView): void => {

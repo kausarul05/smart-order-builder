@@ -215,7 +215,11 @@ export class ApiClient {
   /* ---------------------------------------------------------- Part E */
 
   checkout(
-    body: { paymentMethod: PaymentMethod; couponCode?: string | null },
+    body: {
+      paymentMethod: PaymentMethod;
+      couponCode?: string | null;
+      expectedCartVersion?: number;
+    },
     idempotencyKey: string,
   ): Promise<{ order: StoredOrder; replayed: boolean }> {
     return this.request('/api/checkout', {
