@@ -234,6 +234,14 @@ behind.
 - **The unfinished plate is in sessionStorage, not localStorage.** A draft
   belongs to one tab and one sitting; restoring someone else's half-built
   order in a new window would be surprising rather than helpful.
+- **The model's turn is echoed back verbatim, not rebuilt.** Gemini 3 signs
+  the reasoning behind a tool call with a `thoughtSignature` and answers the
+  follow-up turn with a 400 when it is missing, so `askAssistant` passes the
+  whole content through rather than reassembling it from the one field it
+  reads. The mock in `tests/acceptance/assistant.test.ts` enforces that the
+  same way the real API does — it was more forgiving than Google once, and
+  that is precisely how the bug reached a deployed build.
+
 - **The Gemini model id will rot.** `gemini-2.0-flash` was shut down on
   1 June 2026. The default is a current Flash-Lite, chosen over the newest
   Flash because its free daily allowance is far larger and each question

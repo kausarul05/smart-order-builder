@@ -72,6 +72,21 @@ export function readGeminiConfig(): GeminiConfig {
 }
 
 /** Maps an SDK or HTTP failure onto the taxonomy above. */
+/**
+ * The text to match against. Callers pass `{ status, message }` as often as
+ * they pass an Error, and `String(cause)` on the former is the useless
+ * `[object Object]` - which then hides the one sentence that says what is
+ * actually wrong.
+ */
+function readMessage(cause: unknown): string {
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === 'object' && cause !== null) {
+    const { message } = cause as { message?: unknown };
+    if (typeof message === 'string') return message;
+  }
+  return String(cause);
+}
+
 export function classifyGeminiError(cause: unknown): AssistantError {
   if (cause instanceof AssistantError) return cause;
 
@@ -79,7 +94,7 @@ export function classifyGeminiError(cause: unknown): AssistantError {
     typeof cause === 'object' && cause !== null && 'status' in cause
       ? Number((cause as { status: unknown }).status)
       : Number.NaN;
-  const text = cause instanceof Error ? cause.message : String(cause);
+  const text = readMessage(cause);
 
   if (status === 429 || /quota|rate.?limit/i.test(text)) {
     return new AssistantError('quota', ASSISTANT_ERROR_MESSAGE.quota);
@@ -89,8 +104,18 @@ export function classifyGeminiError(cause: unknown): AssistantError {
   if (status === 404 || /not found|is not supported|unsupported model/i.test(text)) {
     return new AssistantError('unknown-model', ASSISTANT_ERROR_MESSAGE['unknown-model']);
   }
-  if (status === 400 || status === 401 || status === 403 || /api.?key/i.test(text)) {
+  if (status === 401 || status === 403 || /api.?key/i.test(text)) {
     return new AssistantError('invalid-key', ASSISTANT_ERROR_MESSAGE['invalid-key']);
+  }
+  /*
+    A 400 is NOT by itself a bad key. Gemini answers a malformed request
+    with one too, and reporting that as "check your API key" sends whoever
+    is debugging it to the wrong place entirely - which is exactly what
+    happened with a missing thought_signature. A key that is genuinely
+    wrong says so in the message, and that is caught above.
+  */
+  if (status === 400) {
+    return new AssistantError('unknown', `Gemini rejected the request: ${text}`);
   }
   if (/fetch|network|ENOTFOUND|ECONNREFUSED/i.test(text)) {
     return new AssistantError('network', ASSISTANT_ERROR_MESSAGE.network);

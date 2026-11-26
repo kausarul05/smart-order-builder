@@ -57,6 +57,9 @@ afterEach(() => {
  * result it was handed. Also records every request body, so a test can
  * assert what was and was not sent to the model.
  */
+/** Stands in for the opaque signature Gemini 3 puts on a tool call. */
+const THOUGHT_SIGNATURE = 'EpYBCpMBAWkUfRNICS5WeXsaWPcMrd6K';
+
 function mockGemini(call: FunctionCall | null) {
   const bodies: unknown[] = [];
 
@@ -72,6 +75,32 @@ function mockGemini(call: FunctionCall | null) {
         .find((part) => 'functionResponse' in part);
 
       if (response !== undefined) {
+        /*
+          Gemini 3 signs the reasoning behind a tool call and refuses this
+          leg when the signature does not come back on the model's turn.
+          Answering that the same way the real API does is what keeps every
+          test below honest: rebuilding the part from its `functionCall`
+          alone drops the signature, which passed here for as long as this
+          mock was more forgiving than Google.
+        */
+        const echoed = body.contents
+          .filter((turn) => turn.role === 'model')
+          .flatMap((turn) => turn.parts)
+          .find((part) => 'functionCall' in part);
+
+        if (echoed !== undefined && echoed['thoughtSignature'] !== THOUGHT_SIGNATURE) {
+          return HttpResponse.json(
+            {
+              error: {
+                code: 400,
+                message:
+                  'Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly.',
+              },
+            },
+            { status: 400 },
+          );
+        }
+
         // Second leg: phrase the figure our code computed.
         const { functionResponse } = response as {
           functionResponse: { name: string; response: { result: unknown } };
@@ -107,7 +136,7 @@ function mockGemini(call: FunctionCall | null) {
                         text: 'The order data holds no customer information, so I cannot say who the best customer is.',
                       },
                     ]
-                  : [{ functionCall: call }],
+                  : [{ functionCall: call, thoughtSignature: THOUGHT_SIGNATURE }],
             },
           },
         ],

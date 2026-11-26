@@ -52,6 +52,17 @@ interface GeminiPart {
      */
     readonly id?: string;
   };
+  /**
+   * Gemini 3 signs the reasoning behind a tool call and refuses the next
+   * turn without it:
+   *
+   *   400 - "Function call is missing a thought_signature in functionCall
+   *   parts. This is required for tools to work correctly."
+   *
+   * Nothing here ever reads it. It is carried so the model's own turn can
+   * be echoed back exactly as it arrived.
+   */
+  readonly thoughtSignature?: string;
 }
 
 interface GeminiResponse {
@@ -151,9 +162,16 @@ export async function askAssistant(
   // order store. This is what makes TC-18 differ by exactly one.
   const toolResult = tool.run(functionCall.args ?? {}, context);
 
+  /*
+    The model's turn is echoed back exactly as it arrived, not rebuilt from
+    the one field this code cares about. Gemini 3 signs each tool call with
+    a `thoughtSignature` and rejects the follow-up turn when it is missing,
+    and rebuilding the part dropped it. Passing the content through verbatim
+    also carries whatever the next API version adds.
+  */
   const second = await call([
     userTurn,
-    { role: 'model', parts: [{ functionCall }] },
+    { role: 'model', parts },
     {
       role: 'user',
       parts: [
