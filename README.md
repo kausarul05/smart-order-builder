@@ -213,7 +213,11 @@ behind.
 - **The production bundle is large (~617 kB, 197 kB gzipped)** because MSW ships inside it.
   That is deliberate: MSW *is* the backend for this task, so it has to be in
   the deployed build for a live demo to work at all.
-- **Unfinished:** see the Status table. Nothing in Part G has been started.
+- **Unfinished:** nothing in Parts A–G; the Status table above is all green.
+  What is deliberately out of scope: there is no real backend and no
+  authentication, nothing persists beyond this browser's `localStorage`, and
+  the assistant answers only the questions in the C2 tool table — a question
+  nobody wrote a tool for is declined rather than guessed at.
 - **The mock server's own state is what persists, not a client copy.** Part
   G writes stock, reservations, the cart and the idempotency keys to
   localStorage after every committed mutation. A reload restores them and
@@ -238,9 +242,9 @@ behind.
 
 ## Hours spent
 
-<!-- Keep this honest and keep it current — the brief asks for actual hours. -->
-
 | Date | Hours | What |
 | --- | --- | --- |
-| | | |
-| **Total** | | |
+| 25 Nov 2026 | 3 | Toolchain, the Appendix A menu as a fixture, and Parts A–C as pure engines with their acceptance tests (TC-01 … TC-11) |
+| 26 Nov 2026 | 4 | The mock server, Parts D–G — cart and reservations, checkout and the orders JSON, the screens, the Gemini assistant — and TC-12 … TC-20 |
+| 26 Nov 2026 | 3 | Fixes found by using the deployed build rather than the tests: single-choice groups, the draft counting against its own stock, and the service-worker handshake; ANSWERS and DECISIONS |
+| **Total** | **10** | |
