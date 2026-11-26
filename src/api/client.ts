@@ -30,6 +30,17 @@ export function setApiBaseUrl(url: string): void {
   baseUrl = url.replace(/\/$/, '');
 }
 
+/**
+ * How to bring the mock server back when a request slipped past it. The
+ * browser entry point registers MSW's activation handshake here; Node
+ * tests leave it unset, so nothing is ever retried behind a test's back.
+ */
+let revive: (() => Promise<void>) | null = null;
+
+export function setApiRevive(fn: (() => Promise<void>) | null): void {
+  revive = fn;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -90,10 +101,51 @@ export class ApiClient {
     return this.offsetKnown;
   }
 
-  private async request<T>(
+  /**
+   * One request, with a single automatic recovery.
+   *
+   * MSW's service worker keeps the list of active clients in memory, and a
+   * service worker is terminated once the tab has been idle for a while.
+   * When it restarts, that list is empty until the page completes the
+   * activation handshake again, and any request made in that window is
+   * passed through to the network. On the dev server that returns
+   * index.html; on a static host it returns 404, which is where
+   * "Request failed with 404" came from - and why pressing Retry fixed it,
+   * because by then the handshake had finished.
+   *
+   * So a response that did not come from our mock server at all is not
+   * reported as an API error. The worker is revived and the request is
+   * made once more, which is what that Retry click was doing by hand.
+   * Retrying is safe precisely because the first attempt never reached the
+   * server: nothing was reserved, charged or stored. The writes carry an
+   * `Idempotency-Key` on top of that.
+   */
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const first = await this.attempt<T>(path, init);
+    if (first.ok) return first.data;
+
+    if (first.bypassed && revive !== null) {
+      try {
+        await revive();
+      } catch {
+        // Reviving failed; the second attempt still gets its chance, and
+        // if that fails too the caller gets the clear message below.
+      }
+      const second = await this.attempt<T>(path, init);
+      if (second.ok) return second.data;
+      throw second.error;
+    }
+
+    throw first.error;
+  }
+
+  private async attempt<T>(
     path: string,
-    init: RequestInit = {},
-  ): Promise<T> {
+    init: RequestInit,
+  ): Promise<
+    | { readonly ok: true; readonly data: T }
+    | { readonly ok: false; readonly bypassed: boolean; readonly error: ApiError }
+  > {
     let response: Response;
     try {
       response = await fetch(`${baseUrl}${path}`, {
@@ -105,7 +157,12 @@ export class ApiClient {
       });
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
-      throw new ApiError(0, 'network', 'Could not reach the server');
+      // A genuine network failure, not a worker that stepped aside.
+      return {
+        ok: false,
+        bypassed: false,
+        error: new ApiError(0, 'network', 'Could not reach the server'),
+      };
     }
 
     const raw = await response.text().catch(() => '');
@@ -116,36 +173,44 @@ export class ApiClient {
       payload = null;
     }
 
+    /*
+      Every failure our handlers return carries an `error` code in its body.
+      A failure without one did not come from them - it is whatever the
+      dev server or the static host answers for an unhandled path, which is
+      index.html with a 200 locally and a bare 404 in production.
+    */
     if (!response.ok) {
-      const error =
-        payload !== null && typeof payload === 'object'
-          ? (payload as { error?: string; message?: string })
-          : {};
-      throw new ApiError(
-        response.status,
-        error.error ?? 'unknown',
-        error.message ?? `Request failed with ${response.status}`,
-        payload,
-      );
+      if (isApiFailure(payload)) {
+        return {
+          ok: false,
+          bypassed: false,
+          error: new ApiError(
+            response.status,
+            payload.error,
+            payload.message ?? `Request failed with ${response.status}`,
+            payload,
+          ),
+        };
+      }
+      /*
+        No error code, so nothing of ours composed this. A 404, an HTML
+        body or an empty body is the signature of a request that reached
+        the network instead of the worker; anything else is reported with
+        its status rather than retried behind the caller's back.
+      */
+      const looksBypassed =
+        response.status === 404 || looksLikeHtml(raw) || raw.trim() === '';
+      return {
+        ok: false,
+        bypassed: looksBypassed,
+        error: missing(path, raw, response.status),
+      };
     }
 
-    /**
-     * A 200 that is not one of our envelopes means the mock server did not
-     * answer: the request fell through to the dev server, which serves
-     * index.html for any unknown path. That happens when the MSW service
-     * worker is missing or stale - typically a tab left open across a
-     * rebuild. Say so, instead of throwing
-     * "Cannot read properties of null (reading 'serverTime')".
-     */
+    // A 200 that is not one of our envelopes is the same story with a
+    // friendlier status code: the dev server serving index.html.
     if (!isEnvelope<T>(payload)) {
-      throw new ApiError(
-        response.status,
-        'mock_server_missing',
-        looksLikeHtml(raw)
-          ? `The mock server did not answer ${path}. Reload the page to reinstall it.`
-          : `Unexpected response from ${path}.`,
-        payload,
-      );
+      return { ok: false, bypassed: true, error: missing(path, raw, response.status) };
     }
 
     const serverTime = Date.parse(payload.serverTime);
@@ -153,7 +218,7 @@ export class ApiClient {
       this.offsetMs = serverTime - Date.now();
       this.offsetKnown = true;
     }
-    return payload.data;
+    return { ok: true, data: payload.data };
   }
 
   getMenu(): Promise<{ menu: Menu; stock: Readonly<Record<IngredientId, number>> }> {
@@ -242,6 +307,30 @@ export class ApiClient {
 export interface CartItemView extends CartItem {
   readonly expiresInMs: number;
   readonly editable: boolean;
+}
+
+/** The shape every failure OUR handlers return. Anything else is not ours. */
+function isApiFailure(
+  payload: unknown,
+): payload is { readonly error: string; readonly message?: string } {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'error' in payload &&
+    typeof (payload as { error: unknown }).error === 'string'
+  );
+}
+
+/** The one message for "that answer did not come from the mock server". */
+function missing(path: string, raw: string, status: number): ApiError {
+  return new ApiError(
+    status,
+    'mock_server_missing',
+    looksLikeHtml(raw) || status === 404
+      ? `The mock server did not answer ${path}. Reload the page to reinstall it.`
+      : `Unexpected response from ${path} (HTTP ${status}).`,
+    null,
+  );
 }
 
 function isEnvelope<T>(payload: unknown): payload is Envelope<T> {

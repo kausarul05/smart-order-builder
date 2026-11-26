@@ -13,7 +13,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 
-import { ApiClient, ApiError, setApiBaseUrl } from './client';
+import { ApiClient, ApiError, setApiBaseUrl, setApiRevive } from './client';
 
 const server = setupServer();
 const ORIGIN = 'http://localhost:5173';
@@ -32,6 +32,7 @@ afterAll(() => {
 
 beforeEach(() => {
   api = new ApiClient();
+  setApiRevive(null);
 });
 
 afterEach(() => server.resetHandlers());
@@ -152,8 +153,11 @@ describe('error responses', () => {
   });
 
   it('reports a non-JSON error body without crashing', async () => {
+    // Our handlers always put an `error` code in a failure body, so a 500
+    // carrying none did not come from them. It is named as unexpected,
+    // with its status, rather than dressed up as an API error.
     server.use(http.get('/api/menu', () => HttpResponse.text('boom', { status: 500 })));
-    await expect(api.getMenu()).rejects.toThrow(/Request failed with 500/);
+    await expect(api.getMenu()).rejects.toThrow(/Unexpected response from \/api\/menu \(HTTP 500\)/);
   });
 
   it('reports an unreachable server', async () => {
@@ -175,5 +179,122 @@ describe('error responses', () => {
 
     await api.addToCart({ selection: { toast: 1 }, qty: 1 }, 'intent-123');
     expect(seen).toBe('intent-123');
+  });
+});
+
+/**
+ * The bug this guards against only shows on a deployed build.
+ *
+ * MSW's service worker holds its active-client list in memory, and the
+ * browser kills an idle service worker. On restart that list is empty, so
+ * the next request is passed through to the network before the page has
+ * finished saying "I am here" again. The dev server answers an unknown
+ * path with index.html; a static host answers with a bare 404, which
+ * surfaced as "Request failed with 404" and went away as soon as the user
+ * pressed Retry - by which time the handshake had completed.
+ */
+describe('a request that slipped past the mock server', () => {
+  const envelope = (data: unknown) =>
+    HttpResponse.json({ serverTime: new Date().toISOString(), data });
+
+  it('reads a bare 404 as the worker stepping aside, not as an API error', async () => {
+    server.use(http.get('/api/menu', () => HttpResponse.text('Not Found', { status: 404 })));
+
+    await expect(api.getMenu()).rejects.toMatchObject({ code: 'mock_server_missing' });
+    await expect(api.getMenu()).rejects.not.toThrow(/Request failed with 404/);
+  });
+
+  it('revives the worker and succeeds without the user noticing', async () => {
+    let calls = 0;
+    let revived = 0;
+    server.use(
+      http.get('/api/stock', () => {
+        calls += 1;
+        return calls === 1
+          ? HttpResponse.text('Not Found', { status: 404 })
+          : envelope({ available: { egg: 10 } });
+      }),
+    );
+    setApiRevive(async () => {
+      revived += 1;
+    });
+
+    const result = await api.getStock();
+    expect(result.available.egg).toBe(10);
+    expect(revived).toBe(1);
+    expect(calls).toBe(2);
+  });
+
+  it('retries once and no more, so a dead worker still reports itself', async () => {
+    let calls = 0;
+    server.use(
+      http.get('/api/stock', () => {
+        calls += 1;
+        return HttpResponse.text('Not Found', { status: 404 });
+      }),
+    );
+    setApiRevive(async () => undefined);
+
+    await expect(api.getStock()).rejects.toMatchObject({ code: 'mock_server_missing' });
+    expect(calls).toBe(2);
+  });
+
+  it('still retries when reviving itself throws', async () => {
+    let calls = 0;
+    server.use(
+      http.get('/api/stock', () => {
+        calls += 1;
+        return calls === 1
+          ? HttpResponse.text('Not Found', { status: 404 })
+          : envelope({ available: { egg: 4 } });
+      }),
+    );
+    setApiRevive(() => Promise.reject(new Error('registration failed')));
+
+    const result = await api.getStock();
+    expect(result.available.egg).toBe(4);
+    expect(calls).toBe(2);
+  });
+
+  it('never retries a failure the mock server composed itself', async () => {
+    // 15% of /price calls fail on purpose. That answer IS ours, so it is
+    // reported once - retrying behind the caller would hide the chaos the
+    // brief asks for and defeat the Retry button.
+    let calls = 0;
+    server.use(
+      http.post('/api/price', () => {
+        calls += 1;
+        return HttpResponse.json(
+          { error: 'price_unavailable', message: 'Pricing service hiccuped' },
+          { status: 503 },
+        );
+      }),
+    );
+    setApiRevive(async () => undefined);
+
+    await expect(api.price({ cart: [] })).rejects.toMatchObject({
+      code: 'price_unavailable',
+      status: 503,
+    });
+    expect(calls).toBe(1);
+  });
+
+  it('never retries a shortage, which is a real answer about real stock', async () => {
+    let calls = 0;
+    server.use(
+      http.post('/api/cart', () => {
+        calls += 1;
+        return HttpResponse.json(
+          { error: 'shortage', message: 'Short: 2 egg', shortages: [] },
+          { status: 409 },
+        );
+      }),
+    );
+    setApiRevive(async () => undefined);
+
+    await expect(
+      api.addToCart({ selection: { toast: 1 }, qty: 1 }, 'intent-1'),
+    ).rejects.toMatchObject({ code: 'shortage' });
+    expect(calls).toBe(1);
   });
 });

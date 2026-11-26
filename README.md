@@ -68,6 +68,26 @@ only one implementation of the money rules and nothing can drift between
 what the server charges and what a test asserts. The same holds for
 `validate` and for the stock engine.
 
+### The one thing a deployed build does that localhost does not
+
+MSW's service worker keeps its list of active clients in memory, and the
+browser terminates an idle service worker. When it restarts, that list is
+empty until the page repeats the activation handshake, and a request made in
+that window is passed through to the network. The dev server answers an
+unknown path with `index.html`, so locally it looks like a stale worker; a
+static host answers with a bare **404**, which is why this only appeared on
+the deployed site and why pressing Retry made it go away.
+
+So `src/api/client.ts` treats a response that carries no `error` code of
+ours as "that did not come from the mock server", revives the worker and
+makes the request once more, rather than reporting a 404 nobody can act on.
+Retrying is safe because the first attempt never reached the server, and
+every write carries an `Idempotency-Key` regardless. A failure the mock
+server composed itself — the deliberate 15% on `/price`, a shortage, a
+version conflict — is never retried, since that is a real answer. The
+worker is also re-handshaked when the tab becomes visible again, which is
+where it is most likely to have been terminated.
+
 ### Responsive shape
 
 A three-column till from `lg`: a dark category rail, the product grid, and
@@ -140,7 +160,7 @@ The reasoning behind every ◆ decision point and ✋ checkpoint is in
 | F — sales assistant | Done, TC-18 … TC-20 green (Gemini function calling, 7 tools, chat panel) |
 | G — bonus | Done, after A–F. A refresh keeps only still-valid reservations, a stale tab gets a conflict instead of overwriting, and an unfinished plate survives a refresh |
 
-`npm test` runs 337 passing tests, with nothing skipped or pending. Every
+`npm test` runs 343 passing tests, with nothing skipped or pending. Every
 acceptance test from Section 9 (TC-01 … TC-20) exists as a real test, and
 `tests/acceptance/coverage.test.ts` enforces that: it fails the suite if a
 TC id ever loses the test that covers it, or if a placeholder test is left
