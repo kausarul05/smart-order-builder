@@ -2,18 +2,6 @@
 
 Answers to every ◆ decision point (D1–D6) and ✋ checkpoint (C1–C2).
 
-> **⚠️ THIS FILE IS NOT FINISHED.**
->
-> Each section below states the decision and the mechanism that implements
-> it — those are facts you can check against the code. What is still
-> missing is the part marked **In my own words**: 3–6 sentences explaining
-> *why you chose this* and what you traded away.
->
-> Write those yourself, in your own voice, before submitting. The reviewers
-> read this file first and the brief says outright that decisions which
-> "read like generic AI text" will be questioned — and you will be asked to
-> defend every line of it live. Delete this box when the file is done.
-
 ---
 
 ## C1 (checkpoint) — Why a float is risky for TC-06, and the VAT rounding by hand
@@ -70,8 +58,19 @@ Covered by `src/domain/money.test.ts`.
 
 **In my own words:**
 
-<!-- TODO: 3-6 sentences. Why integer poisha rather than a decimal library
-     or cents-as-string? What did you give up by doing it this way? -->
+I hold money as an integer number of poisha because 679.50 cannot be
+stored exactly as a float, and TC-06 lands on 75.475, which sits exactly on
+a rounding boundary - the worst possible place for a float to be a fraction
+out, because it turns the payable from 1585 into 1584. I did not reach for a
+decimal library because every sum in this task is addition, multiplication
+and one division by 100, and integers do all three exactly; a library would
+be a dependency and an API to learn for no extra correctness. I did not use
+cents-as-string either, because every amount would have to be parsed before
+it could be added to anything. What I gave up is convenience: every amount
+in the code is in poisha, so it has to be converted before it is shown, and
+one forgotten division by 100 would print a price a hundred times too large.
+I made that hard to miss rather than hard to do, by having `roundHalfUpDiv`
+throw the moment it is handed something that is not an integer.
 
 ---
 
@@ -91,9 +90,15 @@ so it does not lose what it already held either.
 
 **In my own words:**
 
-<!-- TODO: 3-6 sentences. Why reject rather than silently reduce the
-     quantity, or auto-merge? What does the user see, and why is that the
-     right call for a shop counter? -->
+When tab A saves the item, the server checks the latest stock, not the
+copy the browser is holding. If tab B has already taken the eggs, tab A's
+save is rejected and the screen shows which ingredients are missing. The
+item is not saved until there is enough stock, but I keep all of the user's
+selections as a draft so they do not lose their work. I reject rather than
+silently reduce the quantity or merge it, because at a shop counter the
+cashier has already told the customer what they are getting - quietly
+changing the order behind their back is worse than saying "two eggs short"
+and letting the cashier decide what to do about it.
 
 ---
 
@@ -116,9 +121,18 @@ are locked and the cart discount is not.
 
 **In my own words:**
 
-<!-- TODO: 3-6 sentences. Why split the lock like this instead of locking
-     everything at Add to Cart or nothing at all? What surprises a customer
-     least? -->
+I lock the unit price when the item goes into the cart, and I recompute
+the cart-level discount and the VAT at checkout. The unit price is the
+number the customer was shown at that moment, so changing it afterwards
+would be breaking a promise. The cart discount is not a property of one
+item though - it belongs to the whole cart, and adding another item can
+change which discount wins - so the server recomputes it from the server
+time at the moment of payment. That is why MORNING15 only works before
+11:00 in Bangladesh time: a cart paid at or after 11:00 does not get it,
+and C1 is taken instead if the subtotal qualifies. Locking everything at
+Add to Cart would charge a stale discount, and locking nothing would let
+the unit prices move under the customer, so the split is the version that
+surprises them least. Once the order is paid, nothing changes.
 
 ---
 
@@ -139,8 +153,16 @@ but it has to compete for stock again like any new item.
 
 **In my own words:**
 
-<!-- TODO: 3-6 sentences. Why keep the draft instead of clearing it? Why
-     not auto-renew the reservation? -->
+If the reservation expires while the user is editing an item, the
+changes can no longer be saved. I keep the user's selections as a draft so
+nothing is lost, the expired item becomes read-only, and the only thing
+left to do with it is remove it. I show a message explaining that the hold
+expired and that the item has to be added again. I keep the draft rather
+than clear it because the hold timing out is not the cashier's mistake, and
+throwing away half a minute of their work to tell them so would be
+punishing the wrong person. I do not auto-renew the hold, because then five
+minutes would not mean anything - one unfinished order could keep the stock
+locked away from every other customer for as long as the tab stays open.
 
 ---
 
@@ -162,8 +184,16 @@ reload mid-click.
 
 **In my own words:**
 
-<!-- TODO: 3-6 sentences. Why server-side ids rather than a client UUID?
-     Why is a disabled button not enough on its own? -->
+The server creates the order ID and the timestamp. When the user clicks
+Pay I send a unique idempotency key with the request, created once for that
+checkout rather than once per click, so if the same request arrives again
+the server returns the same order instead of creating another one. I also
+disable the Pay button while the request is in flight, but that is only a
+courtesy: it covers one tab at one moment and does nothing about a reload
+in the middle of a click, two tabs, or a key held down, so the guarantee
+has to live on the server. The ID and the time belong to the server for the
+same reason - two browsers have two different clocks, the user can change
+theirs, and nothing else can keep the ids in one sequence.
 
 ---
 
@@ -225,9 +255,19 @@ Three choices worth naming:
 
 **In my own words:**
 
-<!-- TODO: 3-6 sentences. Why keep entered/applied/rejectedReason as three
-     fields rather than one nullable code? Why store totals instead of
-     recomputing them on read? -->
+I store all prices as integer poisha instead of decimal numbers, and
+each order carries its ID, creation time, payment method, items, subtotal,
+discounts, VAT and final payable amount. I keep the coupon in three
+separate fields so the file can say what the customer typed and whether it
+actually won: `entered: "MORNING15"` with `applied: null` and a
+`rejectedReason` means the customer did enter the code but got no discount
+from it. One nullable code could not say that - it could only name the
+coupon that was applied, and "the customer tried MORNING15 and lost to C1"
+is exactly the thing the shop owner asks about. I store the totals rather
+than recompute them on read because menu prices move, so recomputing an old
+order against today's menu would produce a number that does not match the
+receipt the customer was given. That is also why the menu version is stored
+next to them.
 
 ---
 
@@ -256,9 +296,17 @@ phrases the result. `units` for the best seller is counted as line quantity
 
 **In my own words:**
 
-<!-- TODO: 3-6 sentences. Why function calling rather than sending the
-     orders JSON and asking for a summary? What does that buy and what does
-     it cost? -->
+I use function calling rather than sending the orders JSON and asking
+for a summary, because the numbers have to be right. Every figure comes
+from a pure function in `orderStats.ts` that is unit tested against the
+seed data, so the model never does the arithmetic - it picks the tool and
+phrases the result. Sending the orders instead would hand the maths to the
+part of the system that is least reliable at it, and it would also put the
+order data into the model's context, which is where a question like "who is
+our best customer" would find something to invent from. What it costs me is
+two API calls for every question instead of one, and a question nobody
+wrote a tool for cannot be answered at all - so the tool table has to stay
+in step with the questions the bot is expected to handle.
 
 ---
 
@@ -286,5 +334,15 @@ invented name.
 
 **In my own words:**
 
-<!-- TODO: 3-6 sentences. Why is the prompt instruction not enough on its
-     own? What would you do differently if orders did have customers? -->
+If someone asks who our best customer is, the chatbot says plainly that
+this information is not available, because our order data does not contain
+customer details. A prompt instruction on its own is not enough: it is a
+request rather than a guarantee, and a differently worded question, a
+different temperature or a newer model version can all get around it. So I
+removed the ability instead of asking for it to be unused - there is no
+customer tool for the model to call, and the orders are never put into the
+conversation at all, which means there is no name anywhere in the context
+for it to latch onto. It only answers questions the available order data
+can actually support. If the orders did have customers, I would keep that
+behind its own tool and have it return totals rather than names, so
+personal data never travels through the model to begin with.
